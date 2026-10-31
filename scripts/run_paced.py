@@ -75,7 +75,23 @@ class Pacer:
             await self.sleep(max(0, self.next_request - self.clock()))
             payload = kwargs.get("json", {})
             model = payload.get("model", "unknown")
-            response = await send(url, **kwargs)
+            try:
+                response = await send(url, **kwargs)
+            except httpx.TransportError as exc:
+                self.log(
+                    {
+                        "event": "transport_failure",
+                        "model": model,
+                        "providers": payload.get("provider", {}).get("only", []),
+                        "exception_type": type(exc).__name__,
+                    }
+                )
+                print(
+                    f"[Transport failure] {model}: {type(exc).__name__}. "
+                    "Billing status unknown; reservation retained.",
+                    flush=True,
+                )
+                raise
             self.next_request = self.clock() + self.interval
             if response.status_code == 429:
                 self.streak[model] = self.streak.get(model, 0) + 1
@@ -113,17 +129,21 @@ class Pacer:
 def main():
     options = argparse.ArgumentParser(description=__doc__)
     options.add_argument("--interval-seconds", type=float, default=6)
+    options.add_argument("--timeout-seconds", type=float, default=300)
     options.add_argument("--config", default="config/pilot_budget.yaml")
     options.add_argument("--data", default="data/budget")
     options.add_argument("--run-dir", default="runs/budget")
     options.add_argument("--execute", action="store_true")
     args = options.parse_args()
+    if not math.isfinite(args.timeout_seconds) or args.timeout_seconds <= 0:
+        options.error("--timeout-seconds must be finite and positive")
     directory = Path(args.run_dir)
     pacer = Pacer(args.interval_seconds, directory / "transport_events.jsonl")
     base = httpx.AsyncClient
 
     class PacedClient(base):
         async def post(self, url, **kwargs):
+            kwargs.setdefault("timeout", args.timeout_seconds)
             return await pacer.post(super().post, url, **kwargs)
 
     from afrijudge.cli import main as cli_main
@@ -145,6 +165,7 @@ def main():
             {
                 "event": "paced_launcher_start",
                 "interval_seconds": args.interval_seconds,
+                "timeout_seconds": args.timeout_seconds,
                 "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             }
         )
