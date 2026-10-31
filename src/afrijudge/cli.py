@@ -122,14 +122,17 @@ async def execute(args, config: dict):
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description="AfriJudge-Eval reproducible pilot suite")
     subs = root.add_subparsers(dest="command", required=True)
-    for name in ("plan", "prepare", "preflight", "run", "analyze", "status", "demo"):
+    for name in ("plan", "estimate", "prepare", "preflight", "run", "analyze", "status", "demo"):
         sub = subs.add_parser(name)
         sub.add_argument("--config", default="config/pilot_config.yaml")
         sub.add_argument("--data", default="data/pilot")
         sub.add_argument("--run-dir", default="runs/pilot")
         if name == "run":
             sub.add_argument("--execute", action="store_true", help="Enable paid API calls")
-        if name in ("run", "prepare", "plan", "preflight"):
+        if name == "estimate":
+            sub.add_argument("--generation-input-tokens", type=int, default=500)
+            sub.add_argument("--judge-input-tokens", type=int, default=650)
+        if name in ("run", "prepare", "plan", "preflight", "estimate"):
             sub.add_argument(
                 "--smoke",
                 action="store_true",
@@ -150,13 +153,19 @@ def main():
             print(json.dumps(plan(config), indent=2))
         elif args.command == "prepare":
             print(json.dumps(prepare(config, Path(args.data)), indent=2))
-        elif args.command == "preflight":
+        elif args.command in ("preflight", "estimate"):
 
             async def check():
                 async with httpx.AsyncClient(timeout=60) as http:
                     return await catalog(http, config)
 
             result = asyncio.run(check())
+            if args.command == "estimate":
+                from afrijudge.cost import estimate
+
+                result = estimate(
+                    config, result, args.generation_input_tokens, args.judge_input_tokens
+                )
             print(json.dumps(result, indent=2))
         elif args.command == "run":
             asyncio.run(execute(args, config))

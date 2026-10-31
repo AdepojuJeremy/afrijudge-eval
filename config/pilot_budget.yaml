@@ -1,0 +1,51 @@
+# Smaller sample profile; same models, control conditions, and $45 run ceiling.
+schema_version: 1
+project: AfriJudge-Eval
+seed: 42
+languages: [en, ha, yo, ig]
+budget_limit_usd: 45.0
+concurrency: 6
+generation_max_tokens: 768
+judge_max_tokens: 512
+timeout_seconds: 120
+samples:
+  mmlu: 20
+  mgsm: 20
+  traps_per_language: 20
+  probes_per_language: 20
+# Five generator families; Cohere is the sixth, external judge family.
+generators: [gpt4o, gemini25pro, claude_sonnet, llama33_70b, qwen25_72b]
+judges: [gpt4o, gemini25pro, claude_sonnet, llama33_70b, qwen25_72b, cohere_multilingual]
+models:
+  gpt4o:
+    slug: openai/gpt-4o-2024-08-06
+    family: openai
+  gemini25pro:
+    slug: google/gemini-2.5-pro
+    family: google
+    reasoning: {max_tokens: 128, exclude: true}
+  claude_sonnet:
+    slug: anthropic/claude-sonnet-4.6
+    family: anthropic
+    reasoning: {effort: none, exclude: true}
+  llama33_70b:
+    slug: meta-llama/llama-3.3-70b-instruct
+    family: meta
+    quantizations: [bf16, fp16]
+  qwen25_72b:
+    slug: qwen/qwen-2.5-72b-instruct
+    family: qwen
+    quantizations: [bf16, fp16, fp8]
+  cohere_multilingual:
+    slug: cohere/command-r-08-2024
+    family: cohere
+datasets:
+  mmlu:
+    repo: masakhane/afrimmlu
+    revision: 96f247619673906ae4c321a3232afc67b98ea57e
+  mgsm:
+    repo: masakhane/afrimgsm
+    revision: 8e4268d2b94941f18f63f694cf48e4ae26fbec65
+  translation:
+    url: https://dl.fbaipublicfiles.com/nllb/flores200_dataset.tar.gz
+    sha256: b8b0b76783024b85797e5cc75064eb83fc5288b41e9654dabc7be6ae944011f6

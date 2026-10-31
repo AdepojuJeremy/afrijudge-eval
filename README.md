@@ -48,6 +48,7 @@ Inspect the plan, validate model endpoints, and prepare real data:
 
 ```bash
 afrijudge plan
+afrijudge estimate
 afrijudge preflight
 afrijudge prepare
 ```
@@ -73,6 +74,21 @@ afrijudge run --smoke --data data/smoke --run-dir runs/smoke --execute
 ```
 
 Smoke and pilot directories have separate ledgers and spend limits. Use the free demo for initial verification; any paid smoke spend is additional to the full run's ceiling. The default ceiling is **$45 per run**, shared across every generation and judgment stage. It is a stop limit, not a promise that the expanded suite will finish for $45. Set an OpenRouter key/account limit as an independent billing backstop.
+
+## Budget check before paid execution
+
+`afrijudge run` reports call counts only. Use `afrijudge estimate` for live endpoint-price scenarios. The estimator makes free metadata GETs and assumes input/output token counts; it does not know future response lengths. Output assumptions include internal reasoning. It reports illustrative usage, full output caps, and longer-input/full-cap scenarios, with a separate 10% planning margin. None is an unconditional upper bound or a guarantee of completion.
+
+A smaller profile preserves every control while reducing sample sizes to 20 AfriMMLU + 20 AfriMGSM items per language, 20 translation references per low-resource language, and 20 orthographic baselines per probe language:
+
+```bash
+afrijudge estimate --config config/pilot_budget.yaml
+# After reviewing the scenarios and setting OPENROUTER_API_KEY locally:
+afrijudge run --config config/pilot_budget.yaml \
+  --data data/budget --run-dir runs/budget --execute
+```
+
+This is a different pilot sample, not equivalent statistical power. The original `pilot_config.yaml` remains unchanged. See the [budget-check snapshot](docs/budget-check.md) for measured price scenarios and the limitations of automatic foil validation. Do not raise the budget automatically or interpret a single estimate below $44 as proof that the run will fit.
 
 ## Models
 
