@@ -7,10 +7,12 @@ provider selection, budget accounting, or the existing bounded retry count.
 
 import argparse
 import asyncio
+import contextvars
 import hashlib
 import json
 import math
 import re
+import sqlite3
 import sys
 import time
 from datetime import UTC, datetime
@@ -18,6 +20,143 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import httpx
+
+FILTER_EVENT = contextvars.ContextVar("provider_filter_event", default=None)
+
+
+def is_content_filter(response: httpx.Response) -> bool:
+    if response.status_code != 400:
+        return False
+    try:
+        error = response.json().get("error", {})
+        if not isinstance(error, dict):
+            return False
+        codes = [error.get("code")]
+        metadata = error.get("metadata") or {}
+        raw = metadata.get("raw") if isinstance(metadata, dict) else None
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        if isinstance(raw, dict):
+            detail = raw.get("error", raw)
+            if isinstance(detail, dict):
+                codes.append(detail.get("code"))
+        return any(str(code).lower() == "content_filter" for code in codes)
+    except (ValueError, AttributeError):
+        return False
+
+
+def filter_aware_completion(original):
+    """Record an actual filter rejection as missing; never synthesize an answer."""
+
+    async def complete(client, model_key, messages, meta, max_tokens):
+        token = FILTER_EVENT.set(None)
+        try:
+            return await original(client, model_key, messages, meta, max_tokens)
+        except RuntimeError as exc:
+            event = FILTER_EVENT.get()
+            if not event or str(exc) != f"OpenRouter rejected {model_key}: HTTP 400":
+                raise
+            from afrijudge.io import digest
+
+            # The ordinary client has released the clear HTTP 400 reservation.
+            # Retain a conservative estimate instead of assuming zero billing.
+            payload = event["payload"]
+            key = digest({"payload": payload, "meta": meta})
+            model = client.models[model_key]
+            input_bound = sum(len(m["content"].encode()) + 256 for m in messages)
+            cost = (
+                input_bound * float(model["pricing"]["prompt"])
+                + max_tokens * float(model["pricing"]["completion"])
+            ) * 1.10 + 0.000001
+            record = {
+                "request_id": key,
+                "meta": meta,
+                "model_key": model_key,
+                "requested_model": model["slug"],
+                "returned_model": None,
+                "provider": model["provider"],
+                "pinned_provider": model["provider"],
+                "generation_id": None,
+                "timestamp": time.time(),
+                "usage": {},
+                "status": "provider_filtered",
+                "http_status": 400,
+                "finish_reason": "content_filter",
+                "content": "",
+                "cost_usd": cost,
+                "cost_source": "reservation_estimate",
+                "error_message": event["message"],
+            }
+            client.ledger.reserve(key, cost)
+            client.ledger.finish(key, cost, record)
+            print(
+                f"[Filtered] {model_key}: saved as missing; continuing without "
+                "editing the prompt or changing provider.",
+                flush=True,
+            )
+            return record
+        finally:
+            FILTER_EVENT.reset(token)
+
+    return complete
+
+
+def write_filter_summary(directory: Path):
+    from afrijudge.io import write_json
+
+    path = directory / "ledger.sqlite"
+    if not path.exists():
+        return
+    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as connection:
+        records = [
+            json.loads(r[0])
+            for r in connection.execute(
+                "SELECT record FROM calls WHERE state='done' AND record IS NOT NULL"
+            )
+        ]
+    groups = {}
+    for record in records:
+        meta = record.get("meta", {})
+        key = (
+            meta.get("stage", "unknown"),
+            record.get("model_key", "unknown"),
+            meta.get("lang", "see_pair_id"),
+        )
+        group = groups.setdefault(
+            key,
+            {
+                "stage": key[0],
+                "model": key[1],
+                "lang": key[2],
+                "recorded_outcomes": 0,
+                "provider_filtered": 0,
+            },
+        )
+        group["recorded_outcomes"] += 1
+        group["provider_filtered"] += int(record.get("finish_reason") == "content_filter")
+    summary = {
+        "groups": list(groups.values()),
+        "filtered_requests": [
+            {
+                "request_id": r["request_id"],
+                "model": r.get("model_key"),
+                "meta": r.get("meta"),
+                "http_status": r.get("http_status"),
+                "error_message": r.get("error_message"),
+            }
+            for r in records
+            if r.get("finish_reason") == "content_filter"
+        ],
+        "note": "Filtered responses are missing outputs, not incorrect generated answers. "
+        "Their conservative cost estimates remain counted; prompt and route are unchanged. "
+        "Report coverage/selection effects alongside correctness results.",
+    }
+    write_json(directory / "provider_filter_summary.json", summary)
+    report_path = directory / "report.json"
+    if report_path.exists():
+        report = json.loads(report_path.read_text())
+        report["provider_filter_summary"] = summary
+        write_json(report_path, report)
 
 
 def retry_after_seconds(value: str | None, now: datetime | None = None) -> float:
@@ -149,6 +288,8 @@ class Pacer:
                     f"[HTTP {response.status_code}] {model} via {','.join(providers)}: {message}",
                     flush=True,
                 )
+                if is_content_filter(response):
+                    FILTER_EVENT.set({"payload": payload, "message": message})
             elif response.is_success:
                 self.streak[model] = 0
                 self.completed += 1
@@ -182,8 +323,11 @@ def main():
             return await pacer.post(super().post, url, **kwargs)
 
     from afrijudge.cli import main as cli_main
+    from afrijudge.client import Client
 
     previous_argv = sys.argv
+    original_complete = Client.complete
+    Client.complete = filter_aware_completion(original_complete)
     httpx.AsyncClient = PacedClient
     sys.argv = [
         "afrijudge",
@@ -213,7 +357,10 @@ def main():
         cli_main()
     finally:
         httpx.AsyncClient = base
+        Client.complete = original_complete
         sys.argv = previous_argv
+        if args.execute:
+            write_filter_summary(directory)
 
 
 if __name__ == "__main__":
