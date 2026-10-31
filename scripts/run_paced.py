@@ -37,11 +37,30 @@ def retry_after_seconds(value: str | None, now: datetime | None = None) -> float
 
 
 def safe_error(response: httpx.Response, headers: dict) -> str:
+    fallback = f"HTTP {response.status_code}"
     try:
         error = response.json().get("error", {})
-        message = str(error.get("message", "HTTP 429")) if isinstance(error, dict) else "HTTP 429"
+        parts = []
+        if isinstance(error, dict):
+            for field in ("code", "message"):
+                if error.get(field) is not None:
+                    parts.append(str(error[field]))
+            metadata = error.get("metadata") or {}
+            raw = metadata.get("raw") if isinstance(metadata, dict) else None
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except ValueError:
+                    raw = None
+            if isinstance(raw, dict):
+                detail = raw.get("error", raw)
+                if isinstance(detail, dict):
+                    for field in ("code", "message"):
+                        if detail.get(field) is not None:
+                            parts.append(str(detail[field]))
+        message = " | ".join(parts) or fallback
     except (ValueError, AttributeError):
-        message = "HTTP 429 (non-JSON response)"
+        message = fallback + " (non-JSON response)"
     auth = headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         message = message.replace(auth[7:], "[REDACTED]") if auth[7:] else message
@@ -112,6 +131,22 @@ class Pacer:
                 print(
                     f"[Rate limit] {model}: {message}. Next API attempt waits at least "
                     f"{delay:.0f}s; completed responses remain cached.",
+                    flush=True,
+                )
+            elif 400 <= response.status_code < 500:
+                message = safe_error(response, kwargs.get("headers", {}))
+                providers = payload.get("provider", {}).get("only", [])
+                self.log(
+                    {
+                        "event": "http_rejection",
+                        "status_code": response.status_code,
+                        "model": model,
+                        "providers": providers,
+                        "message": message,
+                    }
+                )
+                print(
+                    f"[HTTP {response.status_code}] {model} via {','.join(providers)}: {message}",
                     flush=True,
                 )
             elif response.is_success:

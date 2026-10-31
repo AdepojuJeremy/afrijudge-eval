@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,6 +28,60 @@ def test_error_logging_redacts_credentials():
     result = launcher.safe_error(response, {"Authorization": "Bearer secretkey"})
     assert "secretkey" not in result
     assert "sk-or-v1-test" not in result
+
+
+def test_nested_400_details_are_logged_without_credentials():
+    response = httpx.Response(
+        400,
+        json={
+            "error": {
+                "message": "Provider returned error",
+                "metadata": {
+                    "raw": json.dumps(
+                        {
+                            "error": {
+                                "code": "invalid_parameter",
+                                "message": "bad setting secret-key",
+                            }
+                        }
+                    )
+                },
+            }
+        },
+    )
+    result = launcher.safe_error(response, {"Authorization": "Bearer secret-key"})
+    assert "invalid_parameter" in result
+    assert "bad setting" in result
+    assert "secret-key" not in result
+    assert (
+        launcher.safe_error(httpx.Response(400, text="not-json"), {})
+        == "HTTP 400 (non-JSON response)"
+    )
+
+
+def test_400_diagnostics_do_not_change_request_or_retry(tmp_path):
+    async def case():
+        payload = {"model": "test/model", "provider": {"only": ["fixed-provider"]}}
+        original = json.dumps(payload, sort_keys=True)
+        calls = []
+        response = httpx.Response(400, json={"error": {"message": "specific error"}})
+
+        async def send(url, **kwargs):
+            calls.append(kwargs)
+            return response
+
+        pacer = launcher.Pacer(6, tmp_path / "events.jsonl")
+        result = await pacer.post(
+            send, "https://openrouter.ai/api/v1/chat/completions", json=payload
+        )
+        assert result is response
+        assert len(calls) == 1
+        assert json.dumps(payload, sort_keys=True) == original
+        event = json.loads((tmp_path / "events.jsonl").read_text())
+        assert event["status_code"] == 400
+        assert event["message"] == "specific error"
+
+    asyncio.run(case())
 
 
 def test_pacing_serializes_posts_and_respects_cooldown(tmp_path):
