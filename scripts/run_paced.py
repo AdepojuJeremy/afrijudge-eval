@@ -22,6 +22,17 @@ from pathlib import Path
 import httpx
 
 FILTER_EVENT = contextvars.ContextVar("provider_filter_event", default=None)
+API_ERROR_EVENT = contextvars.ContextVar("provider_api_error", default=None)
+
+
+def has_api_error(response: httpx.Response) -> bool:
+    if not response.is_success:
+        return False
+    try:
+        body = response.json()
+        return isinstance(body, dict) and "error" in body
+    except ValueError:
+        return False
 
 
 def is_content_filter(response: httpx.Response) -> bool:
@@ -50,9 +61,26 @@ def filter_aware_completion(original):
 
     async def complete(client, model_key, messages, meta, max_tokens):
         token = FILTER_EVENT.set(None)
+        api_token = API_ERROR_EVENT.set(None)
         try:
-            return await original(client, model_key, messages, meta, max_tokens)
+            record = await original(client, model_key, messages, meta, max_tokens)
+            if record.get("status") == "provider_error":
+                raise RuntimeError(
+                    f"Cached provider error for {record['request_id']}; recover it before resuming"
+                )
+            return record
         except RuntimeError as exc:
+            api_error = API_ERROR_EVENT.get()
+            match = re.fullmatch(
+                r"Provider returned an error for ([0-9a-f]{64}); inspect local ledger", str(exc)
+            )
+            if api_error and match:
+                key = match[1]
+                record = client.ledger.cached(key)
+                if record:
+                    record.update({"status": "provider_error", "provider_error": api_error})
+                    client.ledger.finish(key, record["cost_usd"], record)
+                raise
             event = FILTER_EVENT.get()
             if not event or str(exc) != f"OpenRouter rejected {model_key}: HTTP 400":
                 raise
@@ -97,6 +125,7 @@ def filter_aware_completion(original):
             return record
         finally:
             FILTER_EVENT.reset(token)
+            API_ERROR_EVENT.reset(api_token)
 
     return complete
 
@@ -290,6 +319,18 @@ class Pacer:
                 )
                 if is_content_filter(response):
                     FILTER_EVENT.set({"payload": payload, "message": message})
+            elif has_api_error(response):
+                message = safe_error(response, kwargs.get("headers", {}))
+                event = {
+                    "event": "provider_error",
+                    "http_status": response.status_code,
+                    "model": model,
+                    "providers": payload.get("provider", {}).get("only", []),
+                    "message": message,
+                }
+                self.log(event)
+                API_ERROR_EVENT.set(event)
+                print(f"[Provider error] {model}: {message}", flush=True)
             elif response.is_success:
                 self.streak[model] = 0
                 self.completed += 1

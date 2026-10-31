@@ -114,3 +114,25 @@ def test_other_http_400_still_stops_and_is_not_faked_as_missing(tmp_path):
         ledger.close()
 
     asyncio.run(case())
+
+
+def test_embedded_provider_error_is_identified_and_not_accepted_from_cache(tmp_path):
+    async def case():
+        response = httpx.Response(
+            200, json={"error": {"code": 503, "message": "upstream unavailable"}}
+        )
+        client, http, ledger, calls = setup_client(tmp_path, response)
+        wrapped = launcher.filter_aware_completion(Client.complete)
+        async with http:
+            with pytest.raises(RuntimeError, match="Provider returned an error"):
+                await wrapped(client, "m", [{"role": "user", "content": "original"}], {}, 20)
+            records = ledger.records()
+            assert records[0]["status"] == "provider_error"
+            assert "upstream unavailable" in records[0]["provider_error"]["message"]
+            with pytest.raises(RuntimeError, match="Cached provider error"):
+                await wrapped(client, "m", [{"role": "user", "content": "original"}], {}, 20)
+        assert len(calls) == 1
+        assert launcher.API_ERROR_EVENT.get() is None
+        ledger.close()
+
+    asyncio.run(case())
