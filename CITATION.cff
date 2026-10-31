@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "Cite this software repository and the exact commit used. Research results are pending."
+title: "AfriJudge-Eval"
+type: software
+version: 0.1.0
+authors:
+  - family-names: Adepoju
+    given-names: Jeremiah
+repository-code: "https://github.com/AdepojuJeremy/afrijudge-eval"
+license: MIT

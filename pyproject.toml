@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "afrijudge-eval"
+version = "0.1.0"
+description = "Reproducible experiments on multilingual LLM judge consensus and bias"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "Jeremiah Adepoju"}]
+dependencies = ["httpx[socks]>=0.28,<0.29", "numpy>=2.1,<3", "PyYAML>=6.0.2,<7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<10", "ruff>=0.11,<1"]
+
+[project.scripts]
+afrijudge = "afrijudge.cli:main"
+
+[project.urls]
+Repository = "https://github.com/AdepojuJeremy/afrijudge-eval"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
