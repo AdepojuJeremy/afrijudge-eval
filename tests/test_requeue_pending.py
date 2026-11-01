@@ -50,6 +50,28 @@ def test_requeue_no_pending_is_idempotent(tmp_path):
     ledger.close()
 
 
+def test_judge_pending_can_be_retried_without_dropping_charge(tmp_path):
+    ledger = Ledger(tmp_path / "ledger.sqlite", 1)
+    ledger.reserve("judge-request", 0.003)
+    pending = [
+        {
+            "request_id": "judge-request",
+            "request": {
+                "stage": "judge",
+                "pair_id": "yo:mmlu:1",
+                "order": "BA",
+                "model": "test/model",
+            },
+        }
+    ]
+    result = helper.retain_and_requeue(tmp_path, pending)
+    assert result["requests_requeued"] == 1
+    assert ledger.unresolved() == []
+    assert ledger.spent == 0.003
+    assert ledger.cached("judge-request") is None
+    ledger.close()
+
+
 @pytest.mark.parametrize("pending", [[], [{"request_id": "x", "request": {"stage": "unknown"}}]])
 def test_unknown_or_changed_requests_fail_without_losing_reserve(tmp_path, pending):
     ledger = Ledger(tmp_path / "ledger.sqlite", 1)

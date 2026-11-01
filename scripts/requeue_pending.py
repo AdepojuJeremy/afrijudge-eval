@@ -1,4 +1,4 @@
-"""Keep uncertain charge reservations counted while allowing generation retries."""
+"""Keep uncertain charge reservations counted while allowing identified request retries."""
 
 import argparse
 import importlib.util
@@ -47,8 +47,12 @@ def retain_and_requeue(directory: Path, pending: list[dict]) -> dict:
             metadata = {p["request_id"]: p for p in pending}
             if set(metadata) != {r[0] for r in rows}:
                 raise ValueError("Pending rows changed; inspect again before recovery")
-            if any(p["request"].get("stage") != "generation" for p in pending):
-                raise ValueError("Only identified generation requests are supported")
+            if any(
+                p["request"].get("stage") not in {"generation", "foil", "judge"} for p in pending
+            ):
+                raise ValueError(
+                    "Only hash-matched generation, foil, or judge requests are supported"
+                )
             total_before = connection.execute("SELECT SUM(amount) FROM calls").fetchone()[0]
             for key, amount, created in rows:
                 archived_id = f"uncertain-charge:{key}:{uuid.uuid4().hex}"

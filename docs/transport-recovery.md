@@ -12,7 +12,7 @@ There are two valid recovery approaches:
    then deliberately retry the missing response. This may pay for the original
    attempt and the retry, but keeps both within the same budget accounting.
 
-The second option is implemented for identified **generation-stage** requests:
+The second option is implemented for hash-matched **generation, foil, and judging-stage** requests:
 
 ```bash
 python scripts/requeue_pending.py --run-dir runs/budget --data data/budget
@@ -31,7 +31,7 @@ are not included in the completed-request count.
 
 Billing uncertainty is recorded in SQLite and `uncertain_charges.jsonl`. These
 are retained charge estimates, not assertions of actual provider billing. The
-backup remains in the run directory. Unknown/non-generation requests are refused;
+backup remains in the run directory. Unknown or unmatched requests are refused;
 they require a supported identification/reconciliation path first. The current
 helper does not recover missing provider responses from Activity.
 
@@ -44,3 +44,19 @@ prevent connection outages. Request-interval pacing and provider locks are retai
 No retry is called free. If a real charge exceeded its conservative reservation,
 provider billing remains authoritative; use a provider-side spend cap and reconcile
 the final bill. Interrupted and retried calls should be disclosed with the run logs.
+
+
+## Several providers fail together
+
+If a timeout is followed by connection errors for multiple providers, check your
+internet connection before resuming. The log alone does not prove whether the
+failure was local networking, routing, or upstream service availability. A free
+public metadata GET can check basic connectivity, but does not guarantee paid
+inference access or provider health.
+
+The pending inspector reconstructs request hashes for all three stages from the
+frozen source data, model lock, and saved pair set. A matched hash identifies the
+original payload; an unmatched request is never guessed. The recovery helper can
+then retain the uncertain charge reservations and requeue those identified calls,
+including AB/BA judging requests. It still refuses to act while a runner holds the
+run lock, and does not change successful response records or scientific inputs.
