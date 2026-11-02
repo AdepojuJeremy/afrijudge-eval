@@ -11,7 +11,30 @@ Reproducible experiments on **LLM judge consensus, model-family preference, and 
 
 AfriJudge-Eval investigates when agreement among judges from different model families is informative about correctness—and when it reflects shared mistakes. The pilot compares English with Hausa, Yorùbá, and Igbo, using verifiable tasks, exploratory translation foils, and controlled orthographic and prompt-language probes.
 
-This repository contains the experiment runner, source-data preparation, provider validation, request ledger, and statistical readout. **Research results are pending.** Offline examples test the software only; they are not empirical findings. The proposed proficiency-consensus inversion and LRL-CARE improvement remain hypotheses.
+This repository contains the experiment runner, source-data preparation, provider validation, request ledger, and statistical readout. **A budget pilot has completed; semantic validation and confirmatory results are pending.** Offline examples test the software only; they are not empirical findings. The proposed proficiency-consensus inversion and LRL-CARE improvement remain hypotheses.
+
+## Pilot audit and revised protocol
+
+The completed budget pilot produced 5,744 request records. Its offline audit
+identified output truncation, strict-parser failures and source/translation
+issues. Recovered judgments remain a separate sensitivity analysis; they do
+not establish the proposed mechanisms. See [pilot revision](docs/pilot-revision.md)
+for evidence, interpretation limits, source quarantine and the novelty check.
+
+The original configurations retain the v1 protocol. The opt-in draft
+`config/pilot_revision_v2.yaml` adds distinct candidate labels, verdict-first
+bounded JSON and source exclusions. Use new data/run directories; changed code
+must not resume the completed pilot. A free format-validation plan uses saved
+pairs and frozen routes:
+
+```bash
+afrijudge validate-format --source-run runs/budget --run-dir runs/format-v2
+```
+
+This command makes **no API calls by default**. Ten comparisons imply 120 paid
+judge requests if `--execute` is deliberately added. No paid reliability check
+has been completed for v2. Native rubric and semantic validation remain open.
+Do not launch another full run based on a zero-failure expectation.
 
 ## Experiments
 
@@ -58,8 +81,7 @@ The default config requests **240 parallel verifiable items**, **90 translation 
 Enter your OpenRouter key locally, then launch the three-experiment suite:
 
 ```bash
-read -rsp 'OpenRouter API key: ' OPENROUTER_API_KEY; echo
-export OPENROUTER_API_KEY
+export OPENROUTER_API_KEY="$(python -c 'import getpass; print(getpass.getpass("OpenRouter API key: "))')"
 afrijudge run --execute
 ```
 

@@ -195,3 +195,27 @@ def test_catalog_rejects_missing_model():
                 await catalog(http, config)
 
     asyncio.run(case())
+
+
+def test_embedded_provider_error_cannot_be_silently_reused(tmp_path):
+    async def case():
+        calls = []
+
+        def handler(request):
+            calls.append(1)
+            return httpx.Response(
+                200, json={"error": {"message": "upstream failure"}, "usage": {"cost": 0.0001}}
+            )
+
+        ledger = Ledger(tmp_path / "ledger.sqlite", 1)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = Client(http, ledger, settings(), model_lock(), "key")
+            for _ in range(2):
+                with pytest.raises(RuntimeError, match="[Pp]rovider error|Provider returned"):
+                    await client.complete("m", [{"role": "user", "content": "x"}], {}, 20)
+        assert len(calls) == 1
+        assert ledger.records()[0]["status"] == "provider_error"
+        assert ledger.spent > 0
+        ledger.close()
+
+    asyncio.run(case())

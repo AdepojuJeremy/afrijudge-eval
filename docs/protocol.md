@@ -1,5 +1,8 @@
 # Pilot protocol
 
+The original v1 pilot is frozen. See [the v2 revision](pilot-revision.md) for
+the opt-in judging protocol, quarantine and unresolved validation gates.
+
 ## Research questions
 
 1. How does correctness-conditioned cross-family consensus vary across English, Hausa, Yorùbá and Igbo?
@@ -38,7 +41,7 @@ Agreement statistics use complete stable rows with A/B/TIE categories and report
 
 ## Statistical scope
 
-Bootstrap panel-accuracy intervals by underlying source item (1,000 draws). Source IDs shared across conditions/languages must remain grouped in any future pooled inference. Report invalidity, selection, abstention and per-language yields before hypothesis tests.
+Bootstrap panel-accuracy intervals by underlying source item (1,000 draws). Source IDs shared across conditions/languages must remain grouped in any future pooled inference. Report invalidity, selection, explicit ties, order instability and per-language yields before hypothesis tests.
 
 The marginal-column permutation diagnostic preserves judge marginal accuracies but destroys item difficulty. It is an exploratory dependence diagnostic, not an item-aware Condorcet counterfactual. No publication-level p-value or causal conclusion should rest on it alone. The current implementation does not fit the full planned crossed GLMM, compute partial causal variance decompositions, or implement the entire eight-ablation study.
 

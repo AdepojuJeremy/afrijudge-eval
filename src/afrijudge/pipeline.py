@@ -262,21 +262,29 @@ async def run(config: dict, data_dir: Path, run_dir: Path, client) -> dict:
         pair, key, order = job
         rec = await client.complete(
             key,
-            prompts.judge_messages(pair, order),
+            prompts.judge_messages(pair, order, config.get("judge_protocol", "v1")),
             {
                 "stage": "judge",
                 "pair_id": pair["pair_id"],
                 "order": order,
-                "prompt_version": prompts.VERSION,
+                "prompt_version": prompts.judge_version(config),
             },
             config["judge_max_tokens"],
         )
+        parsed = verdict(rec["content"]) if rec["status"] == "success" else "INVALID"
+        details = {}
+        if config.get("judge_protocol", "v1") == "verdict_first_v2":
+            from afrijudge.judge_v2 import parse_record
+
+            parsed, diagnostic = parse_record(rec)
+            details = {"parse_diagnostic": diagnostic, "prompt_version": "2"}
         return {
+            **details,
             "pair_id": pair["pair_id"],
             "judge": key,
             "order": order,
             "request_id": rec["request_id"],
-            "verdict": verdict(rec["content"]) if rec["status"] == "success" else "INVALID",
+            "verdict": parsed,
         }
 
     print(f"Judging all three experiments: {len(pairs)} pairs, {len(jobs)} requests", flush=True)

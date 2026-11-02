@@ -67,7 +67,17 @@ def foil_messages(item: dict, condition: str) -> list[dict]:
     ]
 
 
-def judge_messages(pair: dict, order: str) -> list[dict]:
+def judge_version(config: dict) -> str:
+    return "2" if config.get("judge_protocol", "v1") == "verdict_first_v2" else VERSION
+
+
+def judge_messages(pair: dict, order: str, protocol: str = "v1") -> list[dict]:
+    if protocol == "verdict_first_v2":
+        from afrijudge.judge_v2 import messages
+
+        return messages(pair, order)
+    if protocol != "v1":
+        raise ValueError("Unsupported judge protocol")
     a, b = (pair["a"], pair["b"]) if order == "AB" else (pair["b"], pair["a"])
     payload = {"question": pair["prompt"], "A": a["text"], "B": b["text"]}
     return [

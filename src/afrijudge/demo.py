@@ -29,10 +29,17 @@ class DemoClient:
             data = json.loads(messages[-1]["content"])
             task = "mmlu" if "mmlu" in meta["pair_id"] else "mgsm"
             correct = "B" if task == "mmlu" else "4"
-            winner = "A" if answer(data["A"], task) == correct else "B"
-            text = json.dumps({"reasoning": "SYNTHETIC DEMO ONLY", "verdict": winner})
+            if "RESPONSE_1" in data:
+                winner = (
+                    "RESPONSE_1" if answer(data["RESPONSE_1"], task) == correct else "RESPONSE_2"
+                )
+                text = json.dumps({"verdict": winner, "reasoning": "SYNTHETIC DEMO ONLY"})
+            else:
+                winner = "A" if answer(data["A"], task) == correct else "B"
+                text = json.dumps({"reasoning": "SYNTHETIC DEMO ONLY", "verdict": winner})
         return {
             "status": "success",
+            "finish_reason": "stop",
             "content": text,
             "meta": meta,
             "model_key": key,

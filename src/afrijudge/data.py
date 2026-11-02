@@ -83,6 +83,29 @@ def flores_archive(source: dict, root: Path) -> tarfile.TarFile:
     return tarfile.open(cache, "r:gz")
 
 
+def eligible_parallel_indices(tables: dict, task: str, excluded: list[str]) -> list[int]:
+    """Quarantine known IDs and duplicate texts before aligned source sampling."""
+    requested = {item for item in excluded if item.startswith(task + ":")}
+    available = {row["item_id"] for row in tables["en"]}
+    if requested - available:
+        raise ValueError(f"Unknown excluded {task} source IDs: {sorted(requested - available)}")
+    quarantine = {
+        lang: {row["prompt"] for row in rows if row["item_id"] in requested}
+        for lang, rows in tables.items()
+    }
+    seen = {lang: set() for lang in tables}
+    eligible = []
+    for idx in range(len(tables["en"])):
+        if any(rows[idx]["prompt"] in quarantine[lang] for lang, rows in tables.items()):
+            continue
+        if any(rows[idx]["prompt"] in seen[lang] for lang, rows in tables.items()):
+            continue
+        for lang, rows in tables.items():
+            seen[lang].add(rows[idx]["prompt"])
+        eligible.append(idx)
+    return eligible
+
+
 def prepare(config: dict, root: Path) -> dict:
     """Use identical sampled row IDs across languages and verify answer-key alignment.
 
@@ -90,7 +113,10 @@ def prepare(config: dict, root: Path) -> dict:
     Record row IDs and validate lengths/keys; this is not a semantic translation audit.
     FLORES human translations are not native-original prose; retain that provenance.
     """
-    fingerprint = digest({k: config[k] for k in ("datasets", "languages", "samples", "seed")})
+    identity = {k: config[k] for k in ("datasets", "languages", "samples", "seed")}
+    if "excluded_source_items" in config:
+        identity["excluded_source_items"] = config["excluded_source_items"]
+    fingerprint = digest(identity)
     manifest_path = root / "manifest.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
@@ -114,13 +140,7 @@ def prepare(config: dict, root: Path) -> dict:
         english = tables["en"]
         if any(len(rows) != len(english) for rows in tables.values()):
             raise ValueError(f"Nonparallel row counts in {task}")
-        eligible, seen = [], {lang: set() for lang in tables}
-        for idx in range(len(english)):
-            if any(rows[idx]["prompt"] in seen[lang] for lang, rows in tables.items()):
-                continue
-            for lang, rows in tables.items():
-                seen[lang].add(rows[idx]["prompt"])
-            eligible.append(idx)
+        eligible = eligible_parallel_indices(tables, task, config.get("excluded_source_items", []))
         if count > len(eligible):
             raise ValueError(f"Requested more {task} items than available")
         indices = sorted(random.Random(f"{config['seed']}:{task}").sample(eligible, count))
@@ -173,5 +193,7 @@ def prepare(config: dict, root: Path) -> dict:
         "counts": {k: len(v) for k, v in paths.items()},
         "hashes": {k: digest(v) for k, v in paths.items()},
     }
+    if "excluded_source_items" in config:
+        manifest["excluded_source_items"] = config["excluded_source_items"]
     write_json(manifest_path, manifest)
     return manifest

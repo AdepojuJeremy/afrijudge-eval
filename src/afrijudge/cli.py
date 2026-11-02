@@ -138,6 +138,14 @@ def parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="Small REAL-data subset; use separate data/run dirs",
             )
+    sub = subs.add_parser("validate-format", help="Plan a saved-pair format diagnostic")
+    sub.add_argument("--config", default="config/pilot_revision_v2.yaml")
+    sub.add_argument("--source-run", default="runs/budget")
+    sub.add_argument("--run-dir", default="runs/format-v2")
+    sub.add_argument("--items", type=int, default=10)
+    sub.add_argument("--max-spend-usd", type=float, default=1.0)
+    sub.add_argument("--interval-seconds", type=float, default=12)
+    sub.add_argument("--execute", action="store_true")
     return root
 
 
@@ -167,6 +175,10 @@ def main():
                     config, result, args.generation_input_tokens, args.judge_input_tokens
                 )
             print(json.dumps(result, indent=2))
+        elif args.command == "validate-format":
+            from afrijudge.format_validation import validate
+
+            asyncio.run(validate(args, config))
         elif args.command == "run":
             asyncio.run(execute(args, config))
         elif args.command == "analyze":

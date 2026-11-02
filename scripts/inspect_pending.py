@@ -92,13 +92,13 @@ def judge_requests(config: dict, model_lock: dict, pairs: list[dict]):
                     "stage": "judge",
                     "pair_id": pair["pair_id"],
                     "order": order,
-                    "prompt_version": prompts.VERSION,
+                    "prompt_version": prompts.judge_version(config),
                 }
                 request_id, details = request_identity(
                     config,
                     model_lock,
                     key,
-                    prompts.judge_messages(pair, order),
+                    prompts.judge_messages(pair, order, config.get("judge_protocol", "v1")),
                     meta,
                     config["judge_max_tokens"],
                 )

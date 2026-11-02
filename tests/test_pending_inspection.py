@@ -54,7 +54,8 @@ def test_pending_hash_matches_real_client_with_reasoning_and_precision(tmp_path)
 
 
 @pytest.mark.parametrize("stage", ["foil", "judge"])
-def test_later_stage_hashes_match_actual_client(tmp_path, stage):
+@pytest.mark.parametrize("protocol", ["v1", "verdict_first_v2"])
+def test_later_stage_hashes_match_actual_client(tmp_path, stage, protocol):
     config = {
         "generators": ["m"],
         "judges": ["m"],
@@ -75,6 +76,7 @@ def test_later_stage_hashes_match_actual_client(tmp_path, stage):
             }
         }
     }
+    config["judge_protocol"] = protocol
     if stage == "foil":
         item = {"item_id": "flores:1", "lang": "yo", "en_source": "source"}
         key, details = next(helper.foil_requests(config, lock, [item]))
@@ -91,7 +93,7 @@ def test_later_stage_hashes_match_actual_client(tmp_path, stage):
         }
         key, details = next(helper.judge_requests(config, lock, [pair]))
         meta = {k: details[k] for k in ("stage", "pair_id", "order", "prompt_version")}
-        messages, max_tokens = judge_messages(pair, "AB"), 256
+        messages, max_tokens = judge_messages(pair, "AB", protocol), 256
 
     async def case():
         def timeout(request):

@@ -50,5 +50,20 @@ def load_config(path: str | Path) -> dict:
             raise ValueError(
                 "Datasets require immutable commit hashes or archive SHA-256 checksums"
             )
+    if config.get("judge_protocol", "v1") not in ("v1", "verdict_first_v2"):
+        raise ValueError("Unsupported judge_protocol")
+    excluded = config.get("excluded_source_items", [])
+    if (
+        not isinstance(excluded, list)
+        or any(
+            not isinstance(item, str)
+            or item.split(":")[0] not in ("mmlu", "mgsm")
+            or len(item.split(":")) != 2
+            or not item.split(":")[1].isdigit()
+            for item in excluded
+        )
+        or len(excluded) != len(set(excluded))
+    ):
+        raise ValueError("excluded_source_items must be unique mmlu:N/mgsm:N IDs")
     config["config_hash"] = digest(config)
     return config

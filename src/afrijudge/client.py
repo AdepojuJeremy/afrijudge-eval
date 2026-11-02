@@ -185,6 +185,8 @@ class Client:
         async with self.semaphore:
             cached = self.ledger.cached(key)
             if cached:
+                if cached.get("status") == "provider_error":
+                    raise RuntimeError(f"Cached provider error for {key}; inspect local ledger")
                 return cached
             # UTF-8 bytes plus generous chat framing is a conservative proxy, not a tokenizer.
             input_bound = sum(len(m["content"].encode()) + 256 for m in messages)
@@ -259,7 +261,7 @@ class Client:
                         if reported_cost is not None
                         else "reservation_estimate",
                         "finish_reason": choice.get("finish_reason"),
-                        "status": status,
+                        "status": "provider_error" if "error" in data else status,
                         "content": text if isinstance(text, str) else "",
                     }
                     self.ledger.finish(key, cost, record)
