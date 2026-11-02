@@ -2,7 +2,7 @@
 
 This launcher intentionally lives outside src/afrijudge: existing run code hashes
 and cached payloads remain valid. It changes scheduling only, not model requests,
-provider selection, budget accounting, or the existing bounded retry count.
+provider selection, or budget accounting. Rate-limit retry batches are bounded.
 """
 
 import argparse
@@ -23,6 +23,46 @@ import httpx
 
 FILTER_EVENT = contextvars.ContextVar("provider_filter_event", default=None)
 API_ERROR_EVENT = contextvars.ContextVar("provider_api_error", default=None)
+
+
+def retry_rate_limits(original, cycles=8, delay=180, sleep=None, log=None):
+    """Retry only explicit, exhausted HTTP-429 batches after their reserve is released.
+
+    Transport failures, API error envelopes, budget errors, and cached provider
+    errors remain fatal. Never change the payload, provider, or scientific config.
+    """
+    if type(cycles) is not int or not 1 <= cycles <= 16:
+        raise ValueError("Rate-limit cycles must be an integer from 1 to 16")
+    if not math.isfinite(delay) or delay < 0:
+        raise ValueError("Retry delay must be finite and nonnegative")
+    wait = sleep or asyncio.sleep
+
+    async def complete(client, model_key, messages, meta, max_tokens):
+        for cycle in range(cycles):
+            try:
+                return await original(client, model_key, messages, meta, max_tokens)
+            except RuntimeError as exc:
+                if str(exc) != "Rate limit exhausted; retry this run later" or cycle == cycles - 1:
+                    raise
+                event = {
+                    "event": "rate_limit_batch_retry",
+                    "model_key": model_key,
+                    "completed_batch": cycle + 1,
+                    "maximum_batches": cycles,
+                    "cooldown_seconds": delay,
+                    "meta": meta,
+                }
+                if log:
+                    log(event)
+                print(
+                    f"[Automatic retry] {model_key}: rate-limit batch {cycle + 1}/{cycles} "
+                    f"exhausted. Waiting {delay:g}s before the next batch; saved work reused.",
+                    flush=True,
+                )
+                await wait(delay)
+        raise AssertionError("Unreachable")
+
+    return complete
 
 
 def has_api_error(response: httpx.Response) -> bool:
@@ -347,6 +387,8 @@ def main():
     options = argparse.ArgumentParser(description=__doc__)
     options.add_argument("--interval-seconds", type=float, default=6)
     options.add_argument("--timeout-seconds", type=float, default=300)
+    options.add_argument("--rate-limit-cycles", type=int, default=8)
+    options.add_argument("--retry-delay-seconds", type=float, default=180)
     options.add_argument("--config", default="config/pilot_budget.yaml")
     options.add_argument("--data", default="data/budget")
     options.add_argument("--run-dir", default="runs/budget")
@@ -354,6 +396,10 @@ def main():
     args = options.parse_args()
     if not math.isfinite(args.timeout_seconds) or args.timeout_seconds <= 0:
         options.error("--timeout-seconds must be finite and positive")
+    if not 1 <= args.rate_limit_cycles <= 16:
+        options.error("--rate-limit-cycles must be between 1 and 16")
+    if not math.isfinite(args.retry_delay_seconds) or args.retry_delay_seconds < 30:
+        options.error("--retry-delay-seconds must be finite and at least 30")
     directory = Path(args.run_dir)
     pacer = Pacer(args.interval_seconds, directory / "transport_events.jsonl")
     base = httpx.AsyncClient
@@ -368,7 +414,12 @@ def main():
 
     previous_argv = sys.argv
     original_complete = Client.complete
-    Client.complete = filter_aware_completion(original_complete)
+    Client.complete = retry_rate_limits(
+        filter_aware_completion(original_complete),
+        cycles=args.rate_limit_cycles,
+        delay=args.retry_delay_seconds,
+        log=pacer.log,
+    )
     httpx.AsyncClient = PacedClient
     sys.argv = [
         "afrijudge",
@@ -386,6 +437,8 @@ def main():
                 "event": "paced_launcher_start",
                 "interval_seconds": args.interval_seconds,
                 "timeout_seconds": args.timeout_seconds,
+                "rate_limit_cycles": args.rate_limit_cycles,
+                "retry_delay_seconds": args.retry_delay_seconds,
                 "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             }
         )
