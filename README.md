@@ -3,15 +3,25 @@
 [![CI](https://github.com/AdepojuJeremy/afrijudge-eval/actions/workflows/ci.yml/badge.svg)](https://github.com/AdepojuJeremy/afrijudge-eval/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Research status](https://img.shields.io/badge/status-pilot%20implementation-64748b.svg)](docs/protocol.md)
+## Option C multilingual study
 
-Reproducible experiments on **LLM judge consensus, model-family preference, and shared errors in low-resource languages**.
+The Option C branch ships a frozen, checksummed benchmark with **300 H1 source groups**,
+**1,200 aligned language-items**, and **60 supplemental AfriQA H2 topics**. It covers
+English, Hausa, Yorùbá, and Igbo. The full run schedules **2,640 comparisons** and
+**31,680 judge calls**.
 
-[Quick start](#quick-start) · [Experiments](#experiments) · [Models](#models) · [Protocol](docs/protocol.md) · [Operations](docs/operations.md) · [Code audit](docs/code-audit.md) · [Verification](docs/validation.md)
+```bash
+python -m pip install -e '.[study]'
+afrijudge study-plan
+afrijudge study-preflight
+```
 
-AfriJudge-Eval investigates when agreement among judges from different model families is informative about correctness—and when it reflects shared mistakes. The pilot compares English with Hausa, Yorùbá, and Igbo, using verifiable tasks, exploratory translation foils, and controlled orthographic and prompt-language probes.
+See the [Option C runbook](docs/option-c.md) for the exact launch commands, cost
+planning, dataset pins, provenance, audit export, resumption, and report definitions.
 
-This repository contains the experiment runner, source-data preparation, provider validation, request ledger, and statistical readout. **A budget pilot has completed; semantic validation and confirmatory results are pending.** Offline examples test the software only; they are not empirical findings. The proposed proficiency-consensus inversion and LRL-CARE improvement remain hypotheses.
+## Earlier experiments
+
+The historical pilot commands and records below remain available for replication.
 
 ## Pilot audit and revised protocol
 

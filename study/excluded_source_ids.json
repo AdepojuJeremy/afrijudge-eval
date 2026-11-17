@@ -1,0 +1,8 @@
+{
+  "excluded_source_ids": [
+    "mmlu:398", "mmlu:426",
+    "mgsm:22", "mgsm:23", "mgsm:44", "mgsm:47", "mgsm:60", "mgsm:80", "mgsm:82",
+    "mgsm:96", "mgsm:101", "mgsm:110", "mgsm:130", "mgsm:143", "mgsm:149",
+    "mgsm:152", "mgsm:160", "mgsm:166", "mgsm:183"
+  ]
+}

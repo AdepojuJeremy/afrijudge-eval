@@ -146,12 +146,20 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("--max-spend-usd", type=float, default=1.0)
     sub.add_argument("--interval-seconds", type=float, default=12)
     sub.add_argument("--execute", action="store_true")
+    from afrijudge.study.cli import add_commands
+
+    add_commands(subs)
     return root
 
 
 def main():
     args = parser().parse_args()
     try:
+        if args.command.startswith("study-") or args.command == "generate-all-stimuli":
+            from afrijudge.study.cli import run_command
+
+            print(json.dumps(asyncio.run(run_command(args)), indent=2, ensure_ascii=False))
+            return
         config = load_config(args.config)
         if getattr(args, "smoke", False):
             config["samples"] = dict.fromkeys(config["samples"], 1)

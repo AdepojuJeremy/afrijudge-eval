@@ -1,0 +1,30 @@
+seed: 20261117
+timeout_seconds: 180
+concurrency: 6
+generators: [gpt4o, gemini25pro, claude_sonnet, llama33_70b, qwen25_72b]
+judges: [gpt4o, gemini25pro, claude_sonnet, llama33_70b, qwen25_72b, cohere_multilingual]
+models:
+  gpt4o:
+    slug: openai/gpt-4o-2024-08-06
+    family: openai
+  gemini25pro:
+    slug: google/gemini-2.5-pro
+    family: google
+    reasoning: {max_tokens: 128, exclude: true}
+  claude_sonnet:
+    slug: anthropic/claude-sonnet-4.6
+    family: anthropic
+    reasoning: {effort: none, exclude: true}
+  llama33_70b:
+    slug: meta-llama/llama-3.3-70b-instruct
+    family: meta
+    provider: deepinfra/turbo
+    quantizations: [fp8]
+  qwen25_72b:
+    slug: qwen/qwen-2.5-72b-instruct
+    family: qwen
+    provider: deepinfra/fp8
+    quantizations: [fp8]
+  cohere_multilingual:
+    slug: cohere/command-r-08-2024
+    family: cohere

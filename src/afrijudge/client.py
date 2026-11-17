@@ -22,6 +22,10 @@ class BudgetExceeded(RuntimeError):
     """The next request cannot be reserved within the run's budget."""
 
 
+class RateLimitExhausted(RuntimeError):
+    """An HTTP 429 released its budget reservation and may be retried."""
+
+
 class AmbiguousRequest(RuntimeError):
     """A request may have been billed; reconcile it before resuming."""
 
@@ -149,6 +153,13 @@ async def catalog(http: httpx.AsyncClient, config: dict) -> dict:
     return {"checked_at": time.time(), "models": selected}
 
 
+def reservation_upper(model: dict, messages: list[dict], max_tokens: int) -> float:
+    """Conservative pre-call text-only cost in dollars."""
+    pin, pout = float(model["pricing"]["prompt"]), float(model["pricing"]["completion"])
+    input_bound = sum(len(m["content"].encode()) + 256 for m in messages)
+    return (input_bound * pin + max_tokens * pout) * 1.10 + 0.000001
+
+
 class Client:
     def __init__(
         self, http: httpx.AsyncClient, ledger: Ledger, config: dict, lock: dict, api_key: str
@@ -194,7 +205,7 @@ class Client:
                 raise ValueError(f"Conservative context bound exceeded for {model_key}")
             if model.get("max_completion_tokens") and max_tokens > model["max_completion_tokens"]:
                 raise ValueError(f"Output limit exceeded for {model_key}")
-            upper = (input_bound * pin + max_tokens * pout) * 1.10 + 0.000001
+            upper = reservation_upper(model, messages, max_tokens)
             self.ledger.reserve(key, upper)
             for attempt in range(4):
                 try:
@@ -220,7 +231,7 @@ class Client:
                         await asyncio.sleep(min(max(delay, 0), 30))
                         continue
                     self.ledger.release(key)
-                    raise RuntimeError("Rate limit exhausted; retry this run later")
+                    raise RateLimitExhausted("Rate limit exhausted; retry this run later")
                 if 400 <= response.status_code < 500:
                     self.ledger.release(key)
                     raise RuntimeError(
