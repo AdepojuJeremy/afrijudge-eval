@@ -1,5 +1,7 @@
 # AfriJudge-Eval
 
+**Study 1:** [Working manuscript, reported results, figures, tables and reproducibility status](study1/README.md). The summary release is reconstructed from documented results; raw-data replication artifacts remain pending restoration. The implementation documentation below describes the earlier pilot pipeline.
+
 [![CI](https://github.com/AdepojuJeremy/afrijudge-eval/actions/workflows/ci.yml/badge.svg)](https://github.com/AdepojuJeremy/afrijudge-eval/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
