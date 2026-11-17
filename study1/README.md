@@ -3,11 +3,11 @@
 **Status:** reconstructed working manuscript and aggregate publication assets. This directory is distinct from Study 2.
 
 - [Manuscript](manuscript/manuscript.md)
-- [Tables 1–3](tables/tables.md)
+- [Tables 1–3](tables/tables.md) · [LaTeX source](tables/tables.tex) · [standalone LaTeX wrapper](tables/tables-standalone.tex)
 - [Figure 1: coverage](figures/figure-1-coverage.svg)
 - [Figure 2: anchor proficiency and Top/Bottom-3](figures/figure-2-proficiency.svg)
 - [Figure 3: family preference](figures/figure-3-family-preference.svg)
-- [Reported results (JSON)](results/reported-aggregates.json)
+- [Reported results (JSON)](results/reported-aggregates.json) · CSV: [anchors](results/anchors.csv), [aggregation](results/aggregation.csv), [H2 cells](results/h2_cells.csv), [H2 contrasts](results/h2_contrasts.csv)
 - [Reproducibility and missing artifacts](REPRODUCIBILITY.md)
 
 ## Regenerate summary figures

@@ -1,0 +1,8 @@
+"rule","correct","wrong","undecided","correct_per_assigned_pct","coverage_pct","correct_when_decided_pct"
+"Majority-6","311","0","49","86.39","86.39","100.00"
+"Majority-5","331","0","29","91.94","91.94","100.00"
+"Anchor Top-1","345","2","13","95.83","96.39","99.42"
+"Anchor Top-3","347","1","12","96.39","96.67","99.71"
+"Accuracy-only","343","0","17","95.28","95.28","100.00"
+"LRL-CARE","343","0","17","95.28","95.28","100.00"
+"Anchor-initialized Dawid–Skene","356","3","1","98.89","99.72","99.16"
