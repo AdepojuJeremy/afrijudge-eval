@@ -13,7 +13,13 @@ from afrijudge import judge_v2
 from afrijudge.cli import run_lock
 from afrijudge.client import Client, Ledger, catalog
 from afrijudge.io import digest, read_jsonl, write_json, write_jsonl
-from afrijudge.study.benchmark import LANGUAGES, TIERS, open_benchmark
+from afrijudge.study.benchmark import (
+    DOMAIN2_PROFILES,
+    LANGUAGES,
+    TIERS,
+    benchmark_path,
+    open_benchmark,
+)
 from afrijudge.study.execution import PacedHTTP, dispatch, generate
 from afrijudge.study.stimuli import (
     STYLES,
@@ -43,6 +49,7 @@ def add_commands(subs):
         sub = subs.add_parser(name)
         sub.add_argument("--config", type=Path, default=Path("config/option_c.yaml"))
         sub.add_argument("--total-sources", type=int, choices=TIERS, default=300)
+        sub.add_argument("--domain2", choices=DOMAIN2_PROFILES, default="mixed")
         sub.add_argument("--benchmark", type=Path)
         sub.add_argument("--run-dir", type=Path)
         sub.add_argument("--gen-max-tokens", type=int, default=1024)
@@ -197,8 +204,8 @@ def _frozen(root: Path, meta: dict, expected: int) -> list:
 
 
 def _settings(args):
-    root = args.run_dir or Path(f"runs/option-c-mixed-{args.total_sources}")
-    benchmark = args.benchmark or Path(f"study/benchmark-{args.total_sources}.json.gz")
+    root = args.run_dir or Path(f"runs/option-c-v3-{args.domain2}-{args.total_sources}")
+    benchmark = args.benchmark or benchmark_path(args.total_sources, args.domain2)
     cfg = yaml.safe_load(args.config.read_text(encoding="utf-8"))
     if min(args.gen_max_tokens, args.judge_max_tokens) < 1:
         raise ValueError("Token caps must be positive")
@@ -207,7 +214,37 @@ def _settings(args):
     totals = plan(
         args.total_sources, len(cfg["judges"]), args.gen_max_tokens, args.judge_max_tokens
     )
-    return root, benchmark, cfg, totals
+    return root, benchmark, cfg, {**totals, "domain2": args.domain2}
+
+
+def _generation_estimate(data: dict, models: dict) -> dict:
+    counts = Counter()
+    for row in data["sources"]:
+        counts[row["author_model"]] += 4 if row["split"] == "anchor" else 8
+        if "h2" in row:
+            counts["claude_sonnet"] += 9
+            counts.update({model: 8 for model in row["h2_matchup"]})
+    # Planning assumptions are exposed so they can be replaced with measured usage.
+    input_tokens, completion_tokens = 750, 320
+    cost = 0
+    for model, calls in counts.items():
+        prices = models[model]["pricing"]
+        cost += calls * (
+            input_tokens * float(prices["prompt"]) + completion_tokens * float(prices["completion"])
+        )
+    return {
+        "generation_calls_by_model": dict(counts),
+        "assumed_generation_prompt_tokens": input_tokens,
+        "assumed_generation_completion_tokens_including_reasoning": completion_tokens,
+        "estimated_generation_before_repairs_usd": round(cost, 2),
+    }
+
+
+def _selected_benchmark(path: Path, args) -> dict:
+    data = open_benchmark(path)
+    if (data["total_sources"], data["domain2"]) != (args.total_sources, args.domain2):
+        raise ValueError("Benchmark differs from --total-sources or --domain2")
+    return data
 
 
 def _pricing(totals: dict, lock: dict, judges: list, pairs: list | None = None) -> dict:
@@ -245,9 +282,7 @@ async def _paid(args, root, benchmark, cfg, totals) -> dict:
     key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not key:
         raise ValueError("Set OPENROUTER_API_KEY in your shell")
-    data = open_benchmark(benchmark)
-    if data["total_sources"] != args.total_sources:
-        raise ValueError("Benchmark and --total-sources differ")
+    data = _selected_benchmark(benchmark, args)
     if not math.isfinite(args.interval_seconds) or args.interval_seconds < 0:
         raise ValueError("Invalid pacing interval")
     with run_lock(root):
@@ -260,23 +295,20 @@ async def _locked_paid(args, root, data, cfg, totals, ceiling, key):
         "config": digest(cfg),
         "generation_max_tokens": args.gen_max_tokens,
         "judge_max_tokens": args.judge_max_tokens,
-        "protocol": "option_c_v2",
+        "protocol": "option_c_v3",
     }
     manifest_path = root / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"id": identity}
     if manifest["id"] != identity:
         raise ValueError("Run inputs changed. Choose a separate --run-dir.")
     expected = totals["total_comparison_pairs"]
-    judge_only = args.command == "study-run"
-    pairs = _frozen(root, manifest, expected) if judge_only else None
-    if judge_only:
-        if args.auto_approve_programmatic:
-            audit_rows = export_reviews(root / "review", pairs, cfg["seed"])
-            approval = {"method": "programmatic", "audit_pairs": audit_rows}
-        else:
-            check_reviews(root / "review", pairs)
-            approval = {"method": "human_review"}
-        manifest["approval"] = approval
+    judging = args.command == "study-run"
+    automatic = judging and args.auto_approve_programmatic
+    pairs = _frozen(root, manifest, expected) if "pairs_hash" in manifest else None
+    if judging and not automatic:
+        if pairs is None:
+            raise ValueError("Generate the review packet before running with human sign-off")
+        check_reviews(root / "review", pairs)
     ledger = Ledger(root / "ledger.sqlite", ceiling)
     try:
         async with httpx.AsyncClient(timeout=cfg["timeout_seconds"]) as http:
@@ -296,17 +328,13 @@ async def _locked_paid(args, root, data, cfg, totals, ceiling, key):
             write_json(manifest_path, manifest)
             paced = PacedHTTP(http, args.interval_seconds)
             client = Client(paced, ledger, cfg, lock, key)
-            if not judge_only:
-                pairs = (
-                    _frozen(root, manifest, expected)
-                    if "pairs_hash" in manifest
-                    else (await _assemble(client, data, args.gen_max_tokens))
-                )
-                if "pairs_hash" not in manifest:
-                    write_json(root / "pairs.json", pairs)
-                    manifest["pairs_hash"] = digest(pairs)
-                    write_json(manifest_path, manifest)
-                count = export_reviews(root / "review", pairs, cfg["seed"])
+            if pairs is None:
+                pairs = await _assemble(client, data, args.gen_max_tokens)
+                write_json(root / "pairs.json", pairs)
+                manifest["pairs_hash"] = digest(pairs)
+                write_json(manifest_path, manifest)
+            count = export_reviews(root / "review", pairs, cfg["seed"])
+            if not judging:
                 return {
                     "mode": "review",
                     "pairs": len(pairs),
@@ -314,6 +342,12 @@ async def _locked_paid(args, root, data, cfg, totals, ceiling, key):
                     "pricing": _pricing(totals, lock, cfg["judges"], pairs),
                     "spent_or_reserved_usd": ledger.spent,
                 }
+            approval = {
+                "method": "programmatic" if automatic else "human_review",
+                "audit_pairs": count,
+            }
+            manifest["approval"] = approval
+            write_json(manifest_path, manifest)
             jobs = judge_jobs(pairs, cfg["judges"], data["sha256"])
             records = await dispatch(client, jobs, args.judge_max_tokens, progress="Judging")
             write_jsonl(root / "judge_requests.jsonl", records)
@@ -338,17 +372,22 @@ async def _locked_paid(args, root, data, cfg, totals, ceiling, key):
 async def run_command(args) -> dict:
     root, benchmark, cfg, totals = _settings(args)
     if args.command == "study-preflight":
-        data = open_benchmark(benchmark)
-        if data["total_sources"] != args.total_sources:
-            raise ValueError("Benchmark and --total-sources differ")
+        data = _selected_benchmark(benchmark, args)
         async with httpx.AsyncClient(timeout=60) as http:
             lock = await catalog(http, cfg)
+        pricing = _pricing(totals, lock, cfg["judges"])
+        pricing.update(_generation_estimate(data, lock["models"]))
+        pricing["estimated_total_before_repairs_usd"] = round(
+            pricing["estimated_judging_only_usd"]
+            + pricing["estimated_generation_before_repairs_usd"],
+            2,
+        )
         return {
             **totals,
             "h1_sources_by_dataset": dict(Counter(row["dataset"] for row in data["sources"])),
             "models": lock["models"],
             "benchmark_hash": data["sha256"],
-            "pricing": _pricing(totals, lock, cfg["judges"]),
+            "pricing": pricing,
         }
     if args.command == "study-analyze":
         from afrijudge.study.analysis import analyze

@@ -162,3 +162,110 @@ def test_rate_limit_cooldown_keeps_other_route_moving(monkeypatch):
     )
     assert client.calls == ["first", "second", "first"]
     assert result == ["first", "second"]
+
+
+def test_original_domain2_profile_and_open_explanatory_prompts():
+    data = open_benchmark(ROOT / "study/benchmark-300-afrimmlu.json.gz")
+    assert data["domain2"] == "afrimmlu"
+    assert Counter(r["dataset"] for r in data["sources"] if r["domain"] == "mmlu") == {
+        "masakhane/afrimmlu": 75,
+    }
+    for item in data["sources"]:
+        if item["domain"] == "flores":
+            for row in item["language_sources"].values():
+                assert "\nA)" not in row["prompt"] and "\nB)" not in row["prompt"]
+
+
+def test_numeric_reference_checks_every_intermediate():
+    from afrijudge.study.benchmark import checked_quantities
+
+    assert checked_quantities(["5+7=12", "(5+7)/2=6"]) == {2, 5, 6, 7, 12}
+    for steps in (["2-5+6=3"], ["(5/2)*2=5"], ["1000+1-1=1000"], ["4*2=9"]):
+        with pytest.raises(ValueError):
+            checked_quantities(steps)
+
+
+def test_conclusion_style_and_sentence_gates():
+    from afrijudge.study.stimuli import h2_output, shortcut_prose
+
+    row = {
+        "domain": "mmlu",
+        "language_sources": {
+            "en": {"gold": "A", "foil": "B", "gold_text": "soil erosion", "foil_text": "rainfall"},
+        },
+    }
+    neutral = {
+        "correct": (
+            "The underlying issue here is runoff that removes the fertile layer over time. "
+            "The observed change fits the predicted outcome. <answer>A</answer>"
+        ),
+        "foil": (
+            "The underlying issue here is rainfall that accumulates in the area over time. "
+            "The observed change fits the predicted outcome. <answer>B</answer>"
+        ),
+    }
+    with pytest.raises(ValueError, match="omitted its designated conclusion"):
+        neutral_prose(json.dumps(neutral), row, "en")
+    neutral["correct"] = neutral["correct"].replace("runoff", "soil erosion")
+    parsed = neutral_prose(json.dumps(neutral), row, "en")
+    explanation = (
+        "The source clearly shows rainfall as the explanation. "
+        "This explanation relies on the details from the described event. "
+        "The change appears across the area over time. "
+        "The explanation connects the measured changes with the proposed cause in the question. "
+        "It also considers how the observation applies across the area described in the passage."
+    )
+    raw = json.dumps({"shortcut": "# Summary\n" + explanation + " <answer>B</answer>"})
+    with pytest.raises(ValueError, match="required formal transition"):
+        shortcut_prose(raw, row, "en", parsed)
+    raw = raw.replace(
+        "The source clearly shows", "In accordance with the source, the evidence shows"
+    )
+    assert shortcut_prose(raw, row, "en", parsed).startswith("# Summary")
+    sentences = [
+        "Rainfall is the phenomenon mentioned in the study.",
+        "The description explains its effect across the area.",
+        "The changes appear over the same interval in the evidence.",
+    ]
+    assert h2_output(json.dumps({"sentences": sentences}), "answer", "en")
+    with pytest.raises(ValueError, match="three to four complete sentences"):
+        h2_output(json.dumps({"sentences": sentences + sentences}), "answer", "en")
+
+
+def test_automatic_launch_freezes_pairs_and_audit_before_judging(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from afrijudge.study import analysis, cli
+
+    cfg = yaml.safe_load((ROOT / "config/option_c.yaml").read_text())
+    data = _load(75)
+    pairs = _protocol_pairs(data)
+    args = SimpleNamespace(
+        command="study-run",
+        auto_approve_programmatic=True,
+        gen_max_tokens=1024,
+        judge_max_tokens=256,
+        interval_seconds=4,
+    )
+
+    async def catalog(http, config):
+        return {"models": {}}
+
+    async def assemble(client, data, cap):
+        assert cap == 1024
+        return pairs
+
+    async def dispatch(client, jobs, cap, *, progress):
+        assert (tmp_path / "pairs.json").is_file()
+        assert (tmp_path / "review" / "stratified_audit.csv").read_text().count("PENDING") == 66
+        assert cap == 256
+        return [{}] * len(jobs)
+
+    monkeypatch.setattr(cli, "catalog", catalog)
+    monkeypatch.setattr(cli, "_assemble", assemble)
+    monkeypatch.setattr(cli, "dispatch", dispatch)
+    monkeypatch.setattr(analysis, "analyze", lambda pairs, records, config: {})
+    result = asyncio.run(cli._locked_paid(args, tmp_path, data, cfg, plan(75, 6, 1024, 256), 1, ""))
+    assert result["mode"] == "complete" and result["judge_calls"] == 7920
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert report["approval"] == {"method": "programmatic", "audit_pairs": 66}

@@ -7,7 +7,7 @@
 
 The Option C branch ships a frozen, checksummed benchmark with **300 H1 source groups**,
 **1,200 aligned language-items**, and **60 supplemental AfriQA H2 topics**. It covers
-English, Hausa, Yorùbá, and Igbo. Domain 2 uses 45 AfriMMLU and 30 AfriXNLI items.
+English, Hausa, Yorùbá, and Igbo. The default Domain 2 uses 45 AfriMMLU and 30 AfriXNLI items. The AfriMMLU-only profile is also packaged.
 The explanatory domain uses FLORES-200 passages with verified SIB-200 labels.
 The full run schedules **2,640 comparisons** and
 **31,680 judge calls**.

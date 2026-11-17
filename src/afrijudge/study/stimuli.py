@@ -26,6 +26,13 @@ FORMAL_QUESTION_OPENINGS = {
     "yo": "Ní ìbámu pẹ̀lú ẹ̀rí tí a gbé kalẹ̀,",
     "ig": "Dịka ihe akaebe e wepụtara si dị,",
 }
+EXPLAIN_TASK = {
+    "en": "Answer in three to four sentences. Explain the answer using details in the passage.",
+    "ha": "Amsa da jimloli uku zuwa huɗu. Bayyana amsar ta amfani da bayanan da ke cikin nassin.",
+    "yo": "Dáhùn ní gbólóhùn mẹ́ta sí mẹ́rin. Ṣàlàyé ìdáhùn rẹ pẹ̀lú ẹ̀kúnrẹ́rẹ́ inú àyọkà náà.",
+    "ig": "Zaa n'ahịrịokwu atọ ruo anọ. Jiri nkọwa dị n'ederede kọwaa azịza gị.",
+}
+SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[\w“])")
 TAG = re.compile(r"\s*<answer>\s*([^<>]+?)\s*</answer>\s*$")
 ANSWER_MARKER = re.compile(r"</?\s*answer\b", re.I)
 LIST_LINE = re.compile(r"(?m)^\s*(?:[-*•] |#{1,6} )")
@@ -71,8 +78,8 @@ def h1_job(row: dict, lang: str, part: str, neutral: dict | None = None) -> Job:
         "The metadata tag alone may use digits. Use these exact final number forms in the prose: "
         f"correct={v['gold_text']}; foil={v['foil_text']}. "
         if arithmetic
-        else "Identify the answer in prose and explain the reasoning without using option labels "
-        "or a separate final-answer heading. "
+        else "State the designated conclusion in prose and reproduce its wording. Explain the "
+        "reasoning without using option labels or a separate final-answer heading. "
     )
     source = (
         f"Question:\n{v['prompt']}\n\nCorrect conclusion ({gold}): {v['gold_text']}"
@@ -84,23 +91,28 @@ def h1_job(row: dict, lang: str, part: str, neutral: dict | None = None) -> Job:
         f"The correct key is <answer>{gold}</answer> and the foil key is <answer>{foil}</answer>. "
     )
     if part == "neutral":
+        sentence_count = "3 to 4" if row["domain"] == "flores" else "2 to 3"
         instruction += (
             _style(lang, "idiomatic_native") + " Return a JSON object with exactly 'correct' and "
-            "'foil' string keys. Give each a plain paragraph of 2 to 3 concise sentences "
+            f"'foil' string keys. Give each response {sentence_count} concise sentences in prose "
             "(15 to 80 whitespace-delimited words). The two responses should be closely matched "
             "in length and plausibility. The correct response must explain why the gold conclusion "
             "follows. The foil must make one plausible reasoning error leading to the specified "
             "wrong conclusion. Avoid adding any other error or admitting the intended error."
         )
     else:
+        transitions = ", ".join(FORMAL_TRANSITIONS[lang])
         instruction += (
             _style(lang, "calqued_template") + " Return a JSON object with exactly one string key "
             "'shortcut'. Rewrite the neutral foil as 45 to 160 words and at least 1.4 times its "
-            "length. Add Markdown headings or unnumbered bullets and explicit discourse markers. "
-            "Defend the exact same incorrect claim with the same single error. Expand explanations "
+            "length. Add Markdown headings or unnumbered bullets, and use at least one of these "
+            f"discourse transitions verbatim: {transitions}. Defend the exact same incorrect "
+            "claim with the same single error. Expand explanations "
             "and transitions while preserving the factual propositions and conclusion. "
             "Do not introduce a new claim, an additional calculation, or an extra error."
         )
+        if arithmetic:
+            instruction += " Use hash headings instead of asterisk bullets or emphasis."
         source += "\n\nNeutral foil to rewrite:\n" + neutral["foil"]
     return Job(
         row["author_model"],
@@ -167,12 +179,6 @@ def h2_passage_job(row: dict, lang: str) -> Job:
 
 
 def h2_answer_job(row: dict, lang: str, style: str, question: str, passage: str, model: str) -> Job:
-    instructions = {
-        "en": "Answer in three to four sentences and explain what the evidence says.",
-        "ha": "Amsa da jimloli uku zuwa huɗu, ka bayyana abin da hujjojin suka nuna.",
-        "yo": "Dáhùn ní gbólóhùn mẹ́ta sí mẹ́rin, kí o sì ṣàlàyé ohun tí ẹ̀rí fi hàn.",
-        "ig": "Zaa n'ahịrịokwu atọ ruo anọ ma kọwaa ihe ihe akaebe na-egosi.",
-    }
     transitions = FORMAL_TRANSITIONS[lang]
     style_check = (
         f"Use at least one of these transition phrases verbatim: {', '.join(transitions)}."
@@ -182,10 +188,12 @@ def h2_answer_job(row: dict, lang: str, style: str, question: str, passage: str,
     instruction = (
         _style(lang, style) + " Answer the question in 3 to 4 sentences and 30 to 110 words. "
         "Read the provided evidence, give the direct answer, and explain it using the passage. "
-        "Keep claims grounded in the passage. Return JSON with one string key 'answer'. "
-        "Use plain prose with no headings, source tags, or bullet points. " + style_check
+        "Keep claims grounded in the passage. Return JSON with one key 'sentences' whose value "
+        "is an array of 3 or 4 strings. Each string must be a complete sentence ending in "
+        "sentence punctuation. Use plain prose with no headings, source tags, or bullet points. "
+        + style_check
     )
-    source = f"{question}\n{instructions[lang]}\n\n{passage}"
+    source = h2_user_prompt(question, lang, passage)
     return Job(
         model,
         _messages(instruction, source),
@@ -198,6 +206,10 @@ def h2_answer_job(row: dict, lang: str, style: str, question: str, passage: str,
     )
 
 
+def h2_user_prompt(question: str, lang: str, passage: str) -> str:
+    return f"{question}\n{EXPLAIN_TASK[lang]}\n\n{passage}"
+
+
 def _object(output: str, keys: set[str]) -> dict:
     obj = json_object(output)
     if obj is None or obj.keys() != keys or any(not isinstance(v, str) for v in obj.values()):
@@ -207,6 +219,19 @@ def _object(output: str, keys: set[str]) -> dict:
 
 def _normalize(text):
     return " ".join(nfc(text).casefold().split())
+
+
+def _contains_claim(prose: str, claim: str) -> bool:
+    # Allow sentence punctuation and apostrophe typography while preserving word boundaries.
+    def tokens(text):
+        return " ".join(re.findall(r"\w+(?:'\w+)*", _normalize(text).replace("’", "'")))
+
+    expected = tokens(claim)
+    return bool(expected and f" {expected} " in f" {tokens(prose)} ")
+
+
+def _has_formal_marker(prose: str, lang: str) -> bool:
+    return any(_contains_claim(prose, marker) for marker in FORMAL_TRANSITIONS[lang])
 
 
 def _h1_prose(raw: str, expected: str, row: dict, lang: str) -> str:
@@ -223,8 +248,13 @@ def _h1_prose(raw: str, expected: str, row: dict, lang: str) -> str:
         expected_form = _normalize(number_text(int(expected), lang))
         if not re.search(r"(?<!\w)" + re.escape(expected_form) + r"(?!\w)", _normalize(prose)):
             raise ValueError("Arithmetic prose omitted the designated number form")
-    elif re.search(r"(?i)(?:^|\b)(?:option|choice|answer)\s*[:：]?\s*[A-D](?:[.)\s]|$)", prose):
-        raise ValueError("Prose refers to an option label")
+    else:
+        if re.search(r"(?i)(?:^|\b)(?:option|choice|answer)\s*[:：]?\s*[A-D](?:[.)\s]|$)", prose):
+            raise ValueError("Prose refers to an option label")
+        v = row["language_sources"][lang]
+        conclusion = v["gold_text"] if expected == v["gold"] else v["foil_text"]
+        if not _contains_claim(prose, conclusion):
+            raise ValueError(f"Prose omitted its designated conclusion: {conclusion}")
     return prose
 
 
@@ -237,6 +267,10 @@ def neutral_prose(text: str, row: dict, lang: str) -> dict:
         raise ValueError("Neutral responses failed the matched-length bounds")
     if any(LIST_LINE.search(s) for s in out.values()) or out["correct"] == out["foil"]:
         raise ValueError("Neutral responses must be distinct plain paragraphs")
+    if row["domain"] == "flores" and any(
+        len(SENTENCE_BREAK.split(value)) not in (3, 4) for value in out.values()
+    ):
+        raise ValueError("FLORES explanatory responses must use three to four sentences")
     return out
 
 
@@ -248,11 +282,26 @@ def shortcut_prose(text: str, row: dict, lang: str, neutral: dict) -> str:
         raise ValueError("Shortcut failed the required length expansion")
     if not LIST_LINE.search(prose):
         raise ValueError("Shortcut must include a Markdown heading or list")
+    if not _has_formal_marker(prose, lang):
+        raise ValueError("Shortcut is missing a required formal transition")
     return prose
 
 
 def h2_output(text: str, field: str, lang: str, style: str = "") -> str:
-    prose = nfc(_object(text, {field})[field].strip())
+    if field == "answer":
+        obj = json_object(text)
+        sentences = obj.get("sentences") if obj and obj.keys() == {"sentences"} else None
+        if (
+            not isinstance(sentences, list)
+            or len(sentences) not in (3, 4)
+            or not all(
+                isinstance(s, str) and s.strip().endswith((".", "!", "?")) for s in sentences
+            )
+        ):
+            raise ValueError("Return three to four complete sentences in the JSON array")
+        prose = nfc(" ".join(sentence.strip() for sentence in sentences))
+    else:
+        prose = nfc(_object(text, {field})[field].strip())
     limits = {"question": (4, 60), "answer": (23, 120), "passage": (22, 330)}[field]
     if not limits[0] <= len(prose.split()) <= limits[1]:
         raise ValueError(f"H2 {field} failed the length bounds")
@@ -265,13 +314,9 @@ def h2_output(text: str, field: str, lang: str, style: str = "") -> str:
     ):
         raise ValueError("Formal question is missing the assigned opening phrase")
     if field == "answer":
-        present = any(
-            _normalize(marker) in _normalize(prose) for marker in FORMAL_TRANSITIONS[lang]
-        )
+        present = _has_formal_marker(prose, lang)
         if present != (style == "calqued_template"):
             raise ValueError("Formal transition marker does not match the assigned condition")
-        if len(re.split(r"(?<=[.!?])\s+(?=[\w“])", prose)) < 3:
-            raise ValueError("Use at least three complete sentences in the explanation")
     return prose
 
 
@@ -345,7 +390,7 @@ def compile_pairs(
                         row,
                         lang,
                         style,
-                        f"{question}\n\n{passages[key]}",
+                        h2_user_prompt(question, lang, passages[key]),
                         a,
                         b,
                         split="h2",
@@ -371,6 +416,8 @@ def validate_pairs(pairs: list, expected: int) -> list:
     if len(pairs) != expected or len({p["pair_id"] for p in pairs}) != expected:
         raise ValueError(f"Expected {expected} uniquely identified comparison pairs")
     controls, interventions = {}, {}
+    h2_cells = defaultdict(set)
+    h2_matchups = {}
     for p in pairs:
         texts = (p["prompt"], p["a"]["text"], p["b"]["text"])
         if any(not t.strip() or ANSWER_MARKER.search(t) for t in texts):
@@ -384,6 +431,16 @@ def validate_pairs(pairs: list, expected: int) -> list:
             controls[key] = (p["prompt"], p["a"])
         if p["condition"] == "wrong_calqued_shortcut":
             interventions[key] = (p["prompt"], p["a"])
+        if p["split"] == "h2":
+            tid, cell = p["topic_id"], (p["lang"], p["condition"])
+            matchup = tuple(p[label]["model_key"] for label in ("a", "b"))
+            if cell in h2_cells[tid] or h2_matchups.setdefault(tid, matchup) != matchup:
+                raise ValueError(f"Duplicate H2 cell or inconsistent matchup for {tid}")
+            h2_cells[tid].add(cell)
+    complete = {(lang, style) for lang in LANGUAGES for style in STYLES}
+    expected_topics = {660: 15, 2640: 60}[expected]
+    if len(h2_cells) != expected_topics or any(cells != complete for cells in h2_cells.values()):
+        raise ValueError("Incomplete H2 grid")
     if controls != interventions:
         raise ValueError("H1 intervention changed the question or correct response")
     return pairs

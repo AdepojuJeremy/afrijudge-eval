@@ -6,10 +6,12 @@ import gzip
 import hashlib
 import io
 import json
+import operator
 import random
 import re
 from collections import defaultdict
 from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -30,7 +32,8 @@ LANGUAGES = ("en", "ha", "yo", "ig")
 DOMAINS = ("belebele", "mmlu", "mgsm", "flores")
 AUTHORS = ("gpt4o", "gemini25pro", "claude_sonnet")
 MATCHUPS = (("gemini25pro", "gpt4o"), ("llama33_70b", "gpt4o"), ("llama33_70b", "qwen25_72b"))
-DOMAIN2_COUNTS = {75: {"mmlu": (2, 9), "xnli": (2, 6)}, 300: {"mmlu": (9, 36), "xnli": (6, 24)}}
+DOMAIN2_PROFILES = ("mixed", "afrimmlu")
+MIXED_COUNTS = {75: {"mmlu": (2, 9), "xnli": (2, 6)}, 300: {"mmlu": (9, 36), "xnli": (6, 24)}}
 TIERS = {
     75: ((4, 15), (4, 15), (4, 15), (3, 15)),
     300: ((15, 60),) * 4,
@@ -70,10 +73,12 @@ NLI_LABELS = {
     "ig": ("ọ na-esite na ya", "a pụghị ikpebi ya site na ya", "ọ na-emegide ya"),
 }
 TOPIC = {
-    "en": "Which topic best describes this passage? Explain using details from the text.",
-    "ha": "Wane batu ne ya fi bayyana abin da nassin ya ƙunsa? Yi bayani da hujjoji daga nassin.",
-    "yo": "Kókó wo ló bá àyọkà yìí mu jù? Ṣàlàyé pẹ̀lú ẹ̀kúnrẹ́rẹ́ láti inú àyọkà náà.",
-    "ig": "Kedu isiokwu kacha daba n'ederede a? Jiri nkọwa dị n'ederede kọwaa azịza gị.",
+    "en": "In three to four sentences, explain the main topic and how two details support it.",
+    "ha": (
+        "A cikin jimloli uku zuwa huɗu, bayyana babban batu da yadda bayanai biyu ke goyon bayansa."
+    ),
+    "yo": ("Ní gbólóhùn mẹ́ta sí mẹ́rin, ṣàlàyé kókó pàtàkì àti bí ẹ̀kúnrẹ́rẹ́ méjì ṣe fi í múlẹ̀."),
+    "ig": "N'ahịrịokwu atọ ruo anọ, kọwaa isi okwu na etu nkọwa abụọ si kwado ya.",
 }
 CATEGORIES = (
     "science/technology",
@@ -293,6 +298,41 @@ def _gsm_key(text: str) -> str:
     return "".join(c for c in nfc(text).casefold() if c.isalnum())
 
 
+OPERATIONS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+}
+
+
+def _check_integer(node: ast.AST, values: set[int]) -> Fraction:
+    if isinstance(node, ast.Constant) and type(node.value) is int:
+        value = Fraction(node.value)
+    elif isinstance(node, ast.BinOp) and type(node.op) in OPERATIONS:
+        left = _check_integer(node.left, values)
+        right = _check_integer(node.right, values)
+        value = OPERATIONS[type(node.op)](left, right)
+    else:
+        raise ValueError("Unsupported operations in the published calculation")
+    if value.denominator != 1 or not 1 <= value <= 1_000:
+        raise ValueError("All published operands and results must be integers from 1 to 1000")
+    values.add(int(value))
+    return value
+
+
+def checked_quantities(steps: list[str]) -> set[int]:
+    values = set()
+    for step in steps:
+        if not re.fullmatch(r"[\d, ()+*/-]+=[\d,]+", step):
+            raise ValueError("Unsupported notation in published steps")
+        equation, answer = step.replace(",", "").split("=")
+        node = ast.parse(equation.strip(), mode="eval").body
+        if _check_integer(node, values) != int(answer):
+            raise ValueError("Published arithmetic expression and result differ")
+    return values
+
+
 def _gsm_solutions(cache: Path, origin: list) -> dict:
     raw = _fetch(GSM_ORIGINAL, cache)
     origin.append({"url": GSM_ORIGINAL, "sha256": hashlib.sha256(raw.encode()).hexdigest()})
@@ -301,10 +341,13 @@ def _gsm_solutions(cache: Path, origin: list) -> dict:
         row = json.loads(line)
         solution, _, answer = row["answer"].rpartition("####")
         steps = re.findall(r"<<([^<>]+)>>", solution)
-        if steps and re.fullmatch(r"\s*[\d,]+\s*", answer):
-            if all(re.fullmatch(r"[\d, ()+*/-]+=[\d,]+", step) for step in steps):
-                values = set.union(*(quantities(step) for step in steps))
-                solutions[_gsm_key(row["question"])] = (int(answer.replace(",", "")), values)
+        if not steps or not re.fullmatch(r"\s*[\d,]+\s*", answer):
+            continue
+        try:
+            values = checked_quantities(steps)
+        except (ValueError, ZeroDivisionError, SyntaxError):
+            continue
+        solutions[_gsm_key(row["question"])] = (int(answer.replace(",", "")), values)
     return solutions
 
 
@@ -587,7 +630,7 @@ def flores(cache: Path, origin: list) -> list[dict]:
             foil_text = CATEGORY_WORDS[lang][CATEGORIES.index(foil)]
             options = [gold_text, foil_text] if correct_first else [foil_text, gold_text]
             variants[lang] = {
-                "prompt": f"{passage}\n\n{TOPIC[lang]}\nA) {options[0]}\nB) {options[1]}",
+                "prompt": f"{passage}\n\n{TOPIC[lang]}",
                 "passage": passage,
                 "question": TOPIC[lang],
                 "choices": options,
@@ -662,7 +705,27 @@ def read_exclusions(path: Path) -> set[str]:
     return set(ids)
 
 
-def build(cache: Path, total: int, seed: int, exclusions: set[str]) -> dict:
+def _domain2_counts(total: int, profile: str) -> dict:
+    if profile == "mixed":
+        return MIXED_COUNTS[total]
+    if profile == "afrimmlu":
+        return {"mmlu": TIERS[total][1]}
+    raise ValueError(f"Unknown Domain 2 profile: {profile}")
+
+
+def benchmark_path(total: int, profile: str) -> Path:
+    suffix = "" if profile == "mixed" else f"-{profile}"
+    return Path(f"study/benchmark-{total}{suffix}.json.gz")
+
+
+def build(
+    cache: Path,
+    total: int,
+    seed: int,
+    exclusions: set[str],
+    *,
+    domain2: str = "mixed",
+) -> dict:
     origin = []
     exclusions = set(exclusions)
     pools = {
@@ -677,7 +740,7 @@ def build(cache: Path, total: int, seed: int, exclusions: set[str]) -> dict:
     rows = []
     for domain, counts in zip(DOMAINS, TIERS[total], strict=True):
         if domain == "mmlu":
-            for pool, split_counts in DOMAIN2_COUNTS[total].items():
+            for pool, split_counts in _domain2_counts(total, domain2).items():
                 rows.extend(
                     _select(pools[pool], domain, seed, split_counts, exclusions, used_articles)
                 )
@@ -685,7 +748,8 @@ def build(cache: Path, total: int, seed: int, exclusions: set[str]) -> dict:
             rows.extend(_select(pools[domain], domain, seed, counts, exclusions, used_articles))
     _assign_h2(rows, topics, seed, exclusions)
     body = {
-        "schema": 2,
+        "schema": 3,
+        "domain2": domain2,
         "seed": seed,
         "total_sources": total,
         "languages": list(LANGUAGES),
@@ -705,7 +769,7 @@ def open_benchmark(path: Path) -> dict:
     else:
         data = json.loads(path.read_text(encoding="utf-8"))
     body = {key: value for key, value in data.items() if key != "sha256"}
-    if data["sha256"] != digest(body) or data["schema"] != 2:
+    if data["sha256"] != digest(body) or data["schema"] != 3:
         raise ValueError("Benchmark has an unsupported version or has been edited")
     rows, total = data["sources"], data["total_sources"]
     if len(rows) != total or len({row["source_id"] for row in rows}) != total:
@@ -727,7 +791,7 @@ def open_benchmark(path: Path) -> dict:
             } != {expected // len(AUTHORS)}:
                 raise ValueError(f"Unbalanced author assignment in {domain} {split}")
         if domain == "mmlu":
-            for pool, (anchors, tests) in DOMAIN2_COUNTS[total].items():
+            for pool, (anchors, tests) in _domain2_counts(total, data["domain2"]).items():
                 for split, expected in (("anchor", anchors), ("test", tests)):
                     found = sum(
                         row["dataset"] == PINNED[pool][0] and row["split"] == split
