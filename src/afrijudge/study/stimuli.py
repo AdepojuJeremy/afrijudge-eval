@@ -3,6 +3,7 @@
 import csv
 import os
 import re
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 from typing import NamedTuple
@@ -222,9 +223,14 @@ def _normalize(text):
 
 
 def _contains_claim(prose: str, claim: str) -> bool:
-    # Allow sentence punctuation and apostrophe typography while preserving word boundaries.
+    # A grapheme can retain a combining tone mark even after NFC normalization.
     def tokens(text):
-        return " ".join(re.findall(r"\w+(?:'\w+)*", _normalize(text).replace("’", "'")))
+        normalized = _normalize(text).replace("’", "'")
+        word_chars = "".join(
+            c if c.isalnum() or c == "'" or unicodedata.category(c).startswith("M") else " "
+            for c in normalized
+        )
+        return " ".join(word.strip("'") for word in word_chars.split())
 
     expected = tokens(claim)
     return bool(expected and f" {expected} " in f" {tokens(prose)} ")
@@ -245,8 +251,7 @@ def _h1_prose(raw: str, expected: str, row: dict, lang: str) -> str:
         if MATH_SYMBOL.search(prose) or re.search(r"\w\s+-\s+\w", prose):
             # An unnumbered Markdown heading is allowed. Mathematical symbols are not.
             raise ValueError("Arithmetic prose contains a digit or an operator")
-        expected_form = _normalize(number_text(int(expected), lang))
-        if not re.search(r"(?<!\w)" + re.escape(expected_form) + r"(?!\w)", _normalize(prose)):
+        if not _contains_claim(prose, number_text(int(expected), lang)):
             raise ValueError("Arithmetic prose omitted the designated number form")
     else:
         if re.search(r"(?i)(?:^|\b)(?:option|choice|answer)\s*[:：]?\s*[A-D](?:[.)\s]|$)", prose):
@@ -494,10 +499,9 @@ def audit_sample(pairs: list, seed: int) -> list:
     return sampled
 
 
-def _write_csv(path: Path, pairs: list) -> None:
+def _write_csv(path: Path, rows: list[dict]) -> None:
     if path.exists():
         return
-    rows = [_fields(p) for p in pairs]
     tmp = path.with_suffix(".tmp")
     with tmp.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
@@ -506,12 +510,44 @@ def _write_csv(path: Path, pairs: list) -> None:
     os.replace(tmp, path)
 
 
-def export_reviews(directory: Path, pairs: list, seed: int) -> int:
+def export_reviews(directory: Path, pairs: list, seed: int, sources: list) -> int:
     directory.mkdir(parents=True, exist_ok=True)
     for idx, name in enumerate(REVIEWS):
-        _write_csv(directory / name, [p for p in pairs if _review_index(p) == idx])
+        _write_csv(directory / name, [_fields(p) for p in pairs if _review_index(p) == idx])
     sample = audit_sample(pairs, seed)
-    _write_csv(directory / "stratified_audit.csv", sample)
+    matched_conditions = {
+        (p["source_id"], p["lang"], p["condition"]): p for p in pairs if p["split"] != "anchor"
+    }
+    source_by_id = {row["source_id"]: row for row in sources}
+    counterpart = {
+        "neutral_idiomatic": "wrong_calqued_shortcut",
+        "wrong_calqued_shortcut": "neutral_idiomatic",
+        STYLES[0]: STYLES[1],
+        STYLES[1]: STYLES[0],
+    }
+    rows = []
+    for pair in sample:
+        sid, lang = pair["source_id"], pair["lang"]
+        other = matched_conditions.get((sid, lang, counterpart.get(pair["condition"])), {})
+        source = source_by_id[sid]
+        topic = source.get("h2", {}) if pair["split"] == "h2" else {}
+        reference = source["language_sources"][lang]
+        rows.append({
+            **_fields(pair),
+            "matched_condition": other.get("condition", ""),
+            "matched_question": other.get("prompt", ""),
+            "matched_response_a": other.get("a", {}).get("text", ""),
+            "matched_response_b": other.get("b", {}).get("text", ""),
+            "reference_gold": topic.get("answer", reference["gold_text"]),
+            "reference_foil": "" if topic else reference["foil_text"],
+            "afriqa_topic_id": topic.get("topic_id", ""),
+            "afriqa_original_language": topic.get("original_lang", ""),
+            "afriqa_original_question": topic.get("question", ""),
+            "afriqa_english_question": topic.get("english_question", ""),
+            "afriqa_english_answers": " | ".join(topic.get("english_answers", [])),
+            "afriqa_published_english_evidence": topic.get("passage", ""),
+        })
+    _write_csv(directory / "stratified_audit.csv", rows)
     return len(sample)
 
 

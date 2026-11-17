@@ -333,7 +333,7 @@ async def _locked_paid(args, root, data, cfg, totals, ceiling, key):
                 write_json(root / "pairs.json", pairs)
                 manifest["pairs_hash"] = digest(pairs)
                 write_json(manifest_path, manifest)
-            count = export_reviews(root / "review", pairs, cfg["seed"])
+            count = export_reviews(root / "review", pairs, cfg["seed"], data["sources"])
             if not judging:
                 return {
                     "mode": "review",

@@ -15,6 +15,7 @@ from afrijudge.study.benchmark import (
     mmlu,
     read_exclusions,
     sib200,
+    source_aliases,
     xnli,
 )
 
@@ -91,13 +92,6 @@ def format_row(name: str, row: dict) -> dict:
     return result
 
 
-def _included(row, exclusions):
-    ids = [row.get("source_id"), row.get("legacy_source_id"), row.get("topic_id")]
-    ids.extend(row.get("sib200_sentences", []))
-    ids.extend(f"flores:{idx}" for idx in row.get("sentence_rows", []))
-    return not exclusions.intersection(ids)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache-dir", type=Path, default=Path("data/option-c-cache"))
@@ -112,7 +106,7 @@ def main():
             rows = loader(args.cache_dir, origin, exclusions)
         else:
             rows = loader(args.cache_dir, origin)
-        available = [format_row(name, row) for row in rows if _included(row, exclusions)]
+        available = [format_row(name, row) for row in rows if not exclusions & source_aliases(row)]
         write_jsonl(args.output_dir / f"{name}.jsonl", available)
         counts[name], hashes[name] = len(available), digest(available)
     write_json(

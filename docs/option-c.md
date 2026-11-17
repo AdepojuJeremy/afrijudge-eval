@@ -59,7 +59,8 @@ budget ceiling. Generation retries only failed drafts, using at most four
 validation attempts and raising the token cap for truncated drafts. Judging
 uses a separate 256-token limit. The completion is read using the strict v2
 protocol requiring a full JSON verdict and short reasoning. Invalid, tied,
-and position-unstable judgments are retained explicitly.
+and position-unstable judgments are retained explicitly. A rejected draft and
+the validation feedback are included in its bounded repair request.
 
 To stop for review first, run `generate-all-stimuli` with the same token caps,
 budget and profile. Both paths freeze the pairs and export the review sheets
@@ -68,7 +69,10 @@ For human sign-off, give each row in the three review sheets a `PASS`,
 reviewer and evidence, then run `study-run` without the auto-approval flag. To complete the audit, have fluent reviewers
 independently check reasoning correctness, consistency of the foil across H1
 conditions, number-word grammar, and fidelity and style in H2. The audit file
-starts with pending rows and makes no claim about human agreement. Deterministic
+starts with pending rows. It includes the matched condition for each sampled test
+pair, designated H1 conclusions, and the published AfriQA original, English
+pivot, answers and evidence for H2. Reviewers can each fill an independent copy
+using the same review IDs. Deterministic
 checks cover answer tags and the designated conclusion in the prose, the
 arithmetic conclusion form, the absence of judge-facing tags and symbolic math,
 paired lengths, formal style markers, and the complete H2 grid. The check for
@@ -157,7 +161,10 @@ The frozen materials retain the upstream terms.
   question, correct response and foil conclusion. Format, length and calqued
   phrasing form one intervention. Test agreement, wrong majorities, coverage,
   position instability and shared errors. Compare Top-3 and Bottom-3 ranks
-  learned separately in each language from anchors. The rubric judges
+  learned separately in each language from anchors. The paired estimates include
+  neutral coverage and the change in shortcut susceptibility for lower- and
+  higher-scoring panels, plus full-majority versus Top-1 correctness under the
+  shortcut. The rubric judges
   correctness and clarity without prompting against the tested shortcut.
 - **H2.** Test four languages by two styles. Each AfriQA topic has one
   human-authored Hausa, Yorùbá or Igbo question and one released human English
@@ -166,10 +173,12 @@ The frozen materials retain the upstream terms.
   prose in the template condition. Both question and candidate style change,
   so the contrast estimates their joint effect. The report includes
   provenance, coverage, decisive-only gaps and leave-one-matchup-out estimates.
+  It also reports paired contrasts for the 20 human-original topics per local
+  language against their own English pivots and formal rewrites at full scale.
 - **H3.** Compare anchor-calibrated LRL-CARE against the six-judge majority,
   Top-1, Top-3 and an anchor-fitted symmetric Dawid–Skene rule. With one judge
   per family, family-equal majority and ordinary majority coincide. Calibrate
-  thresholds and weights on anchors, then score correct and wrong decisions
+  judge weights on anchors, apply the fixed voting rules, and score correct and wrong decisions
   and abstention separately on test items.
 
 Intervals resample paired source groups within H1/H3 domains or H2 matchups.

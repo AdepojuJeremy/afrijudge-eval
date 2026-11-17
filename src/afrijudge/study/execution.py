@@ -84,20 +84,22 @@ async def dispatch(client, jobs: list[Job], max_tokens: int, *, progress: str) -
 async def generate(client, jobs: list[Job], cap: int, validate: Callable, kind: str) -> list:
     """Retry only candidates with rejected shape or a length-truncated completion."""
     results = [None] * len(jobs)
-    pending = {idx: ("", cap) for idx in range(len(jobs))}
+    pending = {idx: ("", "", cap) for idx in range(len(jobs))}
     for attempt in range(4):
         by_cap = defaultdict(list)
-        for idx, (error, limit) in pending.items():
+        for idx, (error, draft, limit) in pending.items():
             job = jobs[idx]
-            messages = job.messages
+            messages = list(job.messages)
             if attempt:
-                messages = [
-                    *messages,
-                    {
-                        "role": "user",
-                        "content": f"Fix the previous draft. Validation feedback: {error}",
-                    },
-                ]
+                if draft.strip():
+                    messages.append({"role": "assistant", "content": draft})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Validation attempt {attempt} failed: {error} "
+                        "Return a fresh, complete JSON object satisfying the original request."
+                    ),
+                })
             by_cap[limit].append(
                 (
                     idx,
@@ -115,18 +117,17 @@ async def generate(client, jobs: list[Job], cap: int, validate: Callable, kind: 
         for limit, batch in by_cap.items():
             outputs = await dispatch(client, [job for _, job in batch], limit, progress=kind)
             for (idx, _), record in zip(batch, outputs, strict=True):
+                draft = record.get("content", "")
                 if record.get("finish_reason") == "length":
-                    pending[idx] = ("The response was truncated. Return complete JSON.", limit * 2)
+                    pending[idx] = ("The JSON was truncated.", draft, min(limit * 2, cap * 4))
                     continue
                 try:
                     if record.get("status") != "success":
                         raise ValueError(f"Completion status {record.get('status')}")
-                    results[idx] = validate(idx, record["content"])
+                    results[idx] = validate(idx, draft)
                 except ValueError as exc:
-                    pending[idx] = (str(exc), limit)
+                    pending[idx] = (str(exc), draft, limit)
         if not pending:
             return results
-        # A bounded 4096-token repair for the default 1024-token generation limit.
-        pending = {idx: (error, min(limit, cap * 4)) for idx, (error, limit) in pending.items()}
-    failures = [f"{jobs[idx].meta}: {error}" for idx, (error, _) in sorted(pending.items())]
+    failures = [f"{jobs[idx].meta}: {error}" for idx, (error, _, _) in sorted(pending.items())]
     raise ValueError(f"{kind}: {len(pending)} drafts failed validation\n" + "\n".join(failures))

@@ -180,11 +180,16 @@ def _calibration(anchors, judges, votes):
 def _h1(items, votes, calibrations, seed):
     cells = {}
     contrast_rows = defaultdict(dict)
+    top1_correct = {}
     for lang in LANGUAGES:
         rank = calibrations[lang]["ranked_judges"]
         groups = {"all": rank, "anchor_top3": rank[:3], "anchor_bottom3": rank[-3:]}
         for condition in H1_CONDITIONS:
             part = [p for p in items if p["lang"] == lang and p["condition"] == condition]
+            for p in part:
+                top1_correct[p["domain"], p["source_id"], lang, condition] = int(
+                    votes[p["pair_id"]][rank[0]] == p["gold"]
+                )
             panels = {}
             for name, models in groups.items():
                 selected = [[votes[p["pair_id"]][j] for j in models] for p in part]
@@ -207,18 +212,27 @@ def _h1(items, votes, calibrations, seed):
                         agreed / all_pairs,
                         int(outcome == "B"),
                         int(outcome in CHOICES),
+                        int(outcome == row["gold"]),
                     ]
             cells[f"{lang}:{condition}"] = panels
-    wrong_style = H1_CONDITIONS[1]
+    neutral_style, wrong_style = H1_CONDITIONS
     contrasts = []
-    for (domain, _), vals in contrast_rows.items():
+    for (domain, source_id), vals in contrast_rows.items():
         diffs = []
         for lang in LANGUAGES[1:]:
             low = np.array(vals[lang, wrong_style, "anchor_bottom3"])
             high = np.array(vals[lang, wrong_style, "anchor_top3"])
-            neutral = np.array(vals[lang, H1_CONDITIONS[0], "all"])
+            neutral = np.array(vals[lang, neutral_style, "all"])
             shortcut = np.array(vals[lang, wrong_style, "all"])
-            diffs.append(np.concatenate((low - high, shortcut - neutral)))
+            low_neutral = np.array(vals[lang, neutral_style, "anchor_bottom3"])
+            high_neutral = np.array(vals[lang, neutral_style, "anchor_top3"])
+            diffs.append(np.concatenate((
+                (low - high)[:3],
+                (shortcut - neutral)[:3],
+                [(low_neutral - high_neutral)[2]],
+                ((low - low_neutral) - (high - high_neutral))[:2],
+                [shortcut[3] - top1_correct[domain, source_id, lang, wrong_style]],
+            )))
         contrasts.append((domain, np.mean(diffs, axis=0).tolist()))
     names = [
         "bottom3_minus_top3_shortcut_agreement",
@@ -227,6 +241,10 @@ def _h1(items, votes, calibrations, seed):
         "shortcut_minus_neutral_full_panel_agreement",
         "shortcut_minus_neutral_full_panel_wrong_majority",
         "shortcut_minus_neutral_full_panel_coverage",
+        "bottom3_minus_top3_neutral_coverage",
+        "shortcut_agreement_change_bottom3_minus_top3",
+        "shortcut_wrong_majority_change_bottom3_minus_top3",
+        "full_panel_minus_top1_shortcut_correct_per_assigned_item",
     ]
     return {
         "cells": cells,
@@ -364,14 +382,15 @@ def _h2(items, votes, families, seed):
     for pair in items:
         key = pair["lang"], pair["condition"]
         candidates = _h2_candidates(pair, votes[pair["pair_id"]], families)
-        topics[pair["matchup"], pair["topic_id"]][key] = np.mean(
+        topics[pair["matchup"], pair["topic_id"], pair["original_lang"]][key] = np.mean(
             [candidate["gap"] for candidate in candidates]
         )
         cells[(*key, pair["matchup"])].extend(candidates)
         provenance_cells[(*key, pair["provenance"])].extend(candidates)
     contrasts = []
+    native_contrasts = defaultdict(list)
     neutral, formal = STYLES
-    for (matchup, _), values in topics.items():
+    for (matchup, _, origin), values in topics.items():
         if set(values) != {(lang, style) for lang in LANGUAGES for style in STYLES}:
             raise ValueError("H2 topic lacks one of the eight matched cells")
         neutral_diffs = [values[lang, neutral] - values["en", neutral] for lang in LANGUAGES[1:]]
@@ -382,6 +401,10 @@ def _h2(items, votes, families, seed):
                 [*neutral_diffs, *style_diffs, np.mean(neutral_diffs), np.mean(style_diffs[1:])],
             )
         )
+        native_contrasts[origin].append((matchup, [
+            values[origin, neutral] - values["en", neutral],
+            values[origin, formal] - values[origin, neutral],
+        ]))
     names = [
         *(f"{lang}_idiomatic_minus_english" for lang in LANGUAGES[1:]),
         *(f"{lang}_formal_minus_idiomatic" for lang in LANGUAGES),
@@ -405,6 +428,14 @@ def _h2(items, votes, families, seed):
             ":".join(key): summary(rows) for key, rows in sorted(provenance_cells.items())
         },
         "paired_topic_contrasts": dict(zip(names, _measure(contrasts, seed), strict=True)),
+        "matched_human_original_topic_contrasts": {
+            lang: dict(zip(
+                ("human_original_minus_english_pivot", "formal_minus_human_original"),
+                _measure(rows, seed),
+                strict=True,
+            ))
+            for lang, rows in sorted(native_contrasts.items())
+        },
         "leave_one_matchup_out": {
             matchup: dict(
                 zip(

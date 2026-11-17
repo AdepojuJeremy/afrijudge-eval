@@ -672,15 +672,23 @@ def _article_key(url: str) -> str:
     return unquote(url).rstrip("/").casefold()
 
 
+def source_aliases(row: dict) -> set[str]:
+    aliases = {row.get(key) for key in ("source_id", "legacy_source_id", "topic_id")}
+    aliases.update(row.get("sib200_sentences", []))
+    aliases.update(f"flores:{idx}" for idx in row.get("sentence_rows", []))
+    if "h2" in row:
+        aliases.add(row["h2"]["topic_id"])
+    aliases.discard(None)
+    return aliases
+
+
 def _select(rows, domain, seed, counts, exclusions, used_articles) -> list:
     anchor_n, test_n = counts
     ranked = sorted(rows, key=lambda row: digest([seed, domain, row["source_id"]]))
     seen, chosen = set(used_articles), []
     for row in ranked:
         key = _article_key(row.get("article", row.get("group", row["source_id"])))
-        aliases = [row["source_id"], row.get("legacy_source_id"), *row.get("sib200_sentences", [])]
-        aliases.extend(f"flores:{idx}" for idx in row.get("sentence_rows", []))
-        if exclusions.intersection(aliases) or key in seen:
+        if exclusions.intersection(source_aliases(row)) or key in seen:
             continue
         seen.add(key)
         if "article" in row:
@@ -789,8 +797,7 @@ def open_benchmark(path: Path) -> dict:
         set(row["language_sources"]) != set(LANGUAGES) for row in rows
     ):
         raise ValueError("Incomplete language coverage")
-    used_ids = {row["source_id"] for row in rows}
-    used_ids.update(row["h2"]["topic_id"] for row in rows if "h2" in row)
+    used_ids = set().union(*(source_aliases(row) for row in rows))
     if used_ids.intersection(data["excluded_source_ids"]):
         raise ValueError("An excluded source ID is present")
     for domain, (n_anchor, n_test) in zip(DOMAINS, TIERS[total], strict=True):

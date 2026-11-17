@@ -1,4 +1,5 @@
 import asyncio
+import csv
 import json
 from collections import Counter
 from pathlib import Path
@@ -146,6 +147,13 @@ def test_full_schedule_position_mapping_report_and_audit():
     assert report["pairs_by_dataset"]["masakhane/afriqa"] == 480
     assert report["h3"]["overall"]["six_judge_majority"]["correct"] == 1920
     assert report["h2"]["paired_topic_contrasts"]["en_formal_minus_idiomatic"]["estimate"] == 0
+    assert all(
+        row["formal_minus_human_original"]["source_groups"] == 20
+        for row in report["h2"]["matched_human_original_topic_contrasts"].values()
+    )
+    assert report["h1"]["hau_yo_ig_contrasts"][
+        "full_panel_minus_top1_shortcut_correct_per_assigned_item"
+    ]["estimate"] == 0
 
 
 def test_rate_limit_cooldown_keeps_other_route_moving(monkeypatch):
@@ -176,6 +184,37 @@ def test_rate_limit_cooldown_keeps_other_route_moving(monkeypatch):
     )
     assert client.calls == ["first", "second", "first"]
     assert result == ["first", "second"]
+
+
+def test_generation_repair_receives_the_rejected_draft(monkeypatch):
+    from afrijudge.study import execution
+
+    attempts = []
+
+    async def dispatch(client, jobs, cap, *, progress):
+        attempts.append((jobs[0].messages, cap))
+        if len(attempts) == 1:
+            return [{"finish_reason": "length", "content": '{"answer":'}]
+        return [{"status": "success", "content": '{"answer":"complete"}'}]
+
+    monkeypatch.setattr(execution, "dispatch", dispatch)
+    job = Job("author", [{"role": "user", "content": "Write JSON."}], {})
+    assert asyncio.run(execution.generate(None, [job], 1024, lambda i, t: json.loads(t), "test")) == [
+        {"answer": "complete"}
+    ]
+    messages, cap = attempts[1]
+    assert cap == 2048
+    assert messages[1] == {"role": "assistant", "content": '{"answer":'}
+    assert "truncated" in messages[-1]["content"]
+    assert job.messages == attempts[0][0]
+
+
+def test_conclusion_matching_preserves_combining_tone_marks():
+    from afrijudge.study.stimuli import _contains_claim
+
+    assert _contains_claim("“Ọ̀rọ̀ náà.”", "ọ̀rọ̀")
+    assert not _contains_claim("Ọ́rọ̀ náà.", "ọ̀rọ̀")
+    assert _contains_claim("N’ihe gbasara okwu a.", "n'ihe gbasara")
 
 
 def test_original_domain2_profile_and_open_explanatory_prompts():
@@ -271,7 +310,15 @@ def test_automatic_launch_freezes_pairs_and_audit_before_judging(tmp_path, monke
 
     async def dispatch(client, jobs, cap, *, progress):
         assert (tmp_path / "pairs.json").is_file()
-        assert (tmp_path / "review" / "stratified_audit.csv").read_text().count("PENDING") == 66
+        with (tmp_path / "review" / "stratified_audit.csv").open(newline="", encoding="utf-8") as f:
+            sample = list(csv.DictReader(f))
+        assert len(sample) == 66 and all(row["decision"] == "PENDING" for row in sample)
+        h2 = next(row for row in sample if row["afriqa_topic_id"])
+        assert h2["afriqa_original_question"] and h2["afriqa_published_english_evidence"]
+        assert h2["matched_condition"] and h2["matched_response_a"]
+        shortcut = next(row for row in sample if row["condition"] == "wrong_calqued_shortcut")
+        assert shortcut["matched_condition"] == "neutral_idiomatic"
+        assert shortcut["matched_response_b"] and shortcut["reference_foil"]
         assert cap == 256
         return [{}] * len(jobs)
 
