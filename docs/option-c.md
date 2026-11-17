@@ -124,11 +124,14 @@ from judge messages. Default run directories follow
 `runs/option-c-v3-<profile>-<tier>`. This keeps both profiles and any earlier run
 separate.
 
-The published selections exclude repository pilot samples reproduced from their
-seeds and IDs recoverable from the Study 1 logs. The exact private Study 1
-exclusion manifest was unavailable. If you supply it, rebuild with
+The published selections exclude all 57 source IDs recovered from the 672
+frozen Study 1 pairs, together with previous exclusions and repository pilot
+samples reproduced using their original settings. The manifest records the
+input fingerprint and IDs in `study/excluded_source_ids.json`. The original
+independent quarantine list referenced in the proposal remains unavailable.
+Additional quarantines can be added using
 `--exclude /path/to/excluded_source_ids.json --output study/benchmark-300-local.json.gz`
-and pass that same path via `--benchmark` to both paid stages. Earlier FLORES
+and passed to the runner via `--benchmark`. Earlier FLORES
 pilot articles are excluded at document level. H1 and H2 retain separate source
 IDs even though they share an allocation schedule. The 60 FLORES-200 test groups
 and 60 AfriQA topics come from different releases. Only the AfriQA original

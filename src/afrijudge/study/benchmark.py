@@ -46,6 +46,16 @@ PINNED = {
     "sib200": ("Davlan/sib200", "38977a667f6fc264d5c26ec57a01e16db040b358"),
     "afriqa": ("masakhane/afriqa", "8c9e7495b0e14b41d908e08cb1509a985453523f"),
 }
+# This quarantine was in effect when config/pilot_revision_v2.yaml was sampled.
+PILOT_V2_QUARANTINE = (
+    "mmlu:398",
+    "mmlu:426",
+    "mgsm:47",
+    "mgsm:82",
+    "mgsm:110",
+    "mgsm:130",
+    "mgsm:183",
+)
 FLORES_SOURCE = {
     "url": "https://dl.fbaipublicfiles.com/nllb/flores200_dataset.tar.gz",
     "sha256": "b8b0b76783024b85797e5cc75064eb83fc5288b41e9654dabc7be6ae944011f6",
@@ -240,11 +250,11 @@ def _tsvs(domain: str, cache: Path, origin: list) -> tuple[dict, dict]:
     return sources, parsed
 
 
-def _pilot_exclusions(parsed: dict, domain: str, exclusions: set[str]) -> set[str]:
+def _pilot_exclusions(parsed: dict, domain: str) -> set[str]:
     """Reproduce the sample IDs from every committed pilot profile."""
-    sampled = set(exclusions)
-    for count, quarantine in ((30, []), (20, []), (20, sorted(exclusions))):
-        eligible = eligible_parallel_indices(parsed, domain, quarantine)
+    sampled = set()
+    for count, quarantine in ((30, ()), (20, ()), (20, PILOT_V2_QUARANTINE)):
+        eligible = eligible_parallel_indices(parsed, domain, list(quarantine))
         selected = random.Random(f"42:{domain}").sample(eligible, count)
         sampled.update(parsed["en"][idx]["item_id"] for idx in selected)
     return sampled
@@ -260,7 +270,7 @@ def _eligible_tsv(parsed, domain, exclusions) -> list[int]:
 
 def mmlu(cache: Path, origin: list, exclusions: set) -> list[dict]:
     tables, parsed = _tsvs("mmlu", cache, origin)
-    exclusions.update(_pilot_exclusions(parsed, "mmlu", exclusions))
+    exclusions.update(_pilot_exclusions(parsed, "mmlu"))
     result = []
     for idx in _eligible_tsv(parsed, "mmlu", exclusions):
         rows = {lang: table[idx] for lang, table in tables.items()}
@@ -354,7 +364,7 @@ def _gsm_solutions(cache: Path, origin: list) -> dict:
 def mgsm(cache: Path, origin: list, exclusions: set) -> list[dict]:
     tables, parsed = _tsvs("mgsm", cache, origin)
     original = _gsm_solutions(cache, origin)
-    exclusions.update(_pilot_exclusions(parsed, "mgsm", exclusions))
+    exclusions.update(_pilot_exclusions(parsed, "mgsm"))
     result = []
     for idx in _eligible_tsv(parsed, "mgsm", exclusions):
         rows = {lang: table[idx] for lang, table in tables.items()}
@@ -698,7 +708,8 @@ def read_exclusions(path: Path) -> set[str]:
     value = json.loads(path.read_text(encoding="utf-8"))
     ids = value.get("excluded_source_ids") if isinstance(value, dict) else value
     if not isinstance(ids, list) or any(
-        not isinstance(key, str) or key.split(":")[0] not in (*DOMAINS, "xnli", "sib200", "afriqa")
+        not isinstance(key, str)
+        or key.split(":")[0] not in (*DOMAINS, "xnli", "sib200", "afriqa", "proverb", "h2")
         for key in ids
     ):
         raise ValueError("Expected source IDs, as a list or as excluded_source_ids")
@@ -779,6 +790,7 @@ def open_benchmark(path: Path) -> dict:
     ):
         raise ValueError("Incomplete language coverage")
     used_ids = {row["source_id"] for row in rows}
+    used_ids.update(row["h2"]["topic_id"] for row in rows if "h2" in row)
     if used_ids.intersection(data["excluded_source_ids"]):
         raise ValueError("An excluded source ID is present")
     for domain, (n_anchor, n_test) in zip(DOMAINS, TIERS[total], strict=True):

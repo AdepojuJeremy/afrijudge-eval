@@ -28,6 +28,20 @@ def _load(total=300):
     return open_benchmark(ROOT / "study" / f"benchmark-{total}.json.gz")
 
 
+@pytest.mark.parametrize("total", (75, 300))
+@pytest.mark.parametrize("suffix", ("", "-afrimmlu"))
+def test_bundled_benchmark_excludes_every_study1_source(total, suffix):
+    data = open_benchmark(ROOT / "study" / f"benchmark-{total}{suffix}.json.gz")
+    exclusion_file = json.loads((ROOT / "study/excluded_source_ids.json").read_text())
+    recovered = exclusion_file["study1_completed"]
+    study1_ids = set(recovered["source_ids"])
+    assert recovered["pair_count"] == 672 and len(study1_ids) == 57
+    assert study1_ids <= set(data["excluded_source_ids"])
+    selected = {r["source_id"] for r in data["sources"]}
+    selected.update(r["h2"]["topic_id"] for r in data["sources"] if "h2" in r)
+    assert study1_ids.isdisjoint(selected)
+
+
 @pytest.mark.parametrize("total,calls", ((75, 7920), (300, 31680)))
 def test_published_benchmark(total, calls):
     data = _load(total)
