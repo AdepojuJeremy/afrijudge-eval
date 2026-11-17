@@ -2,7 +2,9 @@
 
 Option C uses four-way aligned English, Hausa, Yorùbá and Igbo materials. Each H1
 domain contributes 15 anchor and 60 held-out source groups. A source group stays
-together across languages and H1 conditions. The 60 explanatory test slots each
+together across languages and H1 conditions. Domain 2 uses **45 AfriMMLU** and
+**30 AfriXNLI** sources at full scale (9 and 6 anchors, 36 and 24 test sources).
+AfriXNLI contributes at most one hypothesis per premise. The 60 explanatory test slots each
 carry one separate AfriQA topic for H2, assigned across the three matchups and the
 three original-question languages.
 
@@ -90,9 +92,9 @@ for generation and judge request history. Preserve `pairs.json` and
 | Reading | [Belebele](https://huggingface.co/datasets/facebook/belebele) | Join by article link and question number, check the choice key, select at most one question per article. |
 | Conceptual | [AfriMMLU](https://huggingface.co/datasets/masakhane/afrimmlu) | Align test row and subject, check the answer key in all four languages. |
 | Arithmetic | [AfriMGSM](https://huggingface.co/datasets/masakhane/afrimgsm) and [GSM8K](https://github.com/openai/grade-school-math) | Align by test row and final gold, then join the English original to screen intermediate quantities. Render digits and currency markers into words. |
-| Explanatory | [FLORES-200](https://github.com/facebookresearch/flores/tree/main/flores200) and [SIB-200](https://huggingface.co/datasets/Davlan/sib200) | Group FLORES sentences by article URL and verify SIB labels on matching four-language text. A separate article pool supplies distractor claims. |
+| Explanatory | [FLORES-200](https://github.com/facebookresearch/flores/tree/main/flores200) and [SIB-200](https://huggingface.co/datasets/Davlan/sib200) | Group FLORES sentences by article URL and verify SIB labels on matching four-language text. Use the shared SIB topic label as gold and a different category as the foil. |
 | H2 | [AfriQA](https://huggingface.co/datasets/masakhane/afriqa) and [published gold passages](https://github.com/masakhane-io/afriqa/tree/5c29933753692c28773c34ac1f68482007f1d2bb/data/gold_passages) | Exact normalized original and English question join. Retain a distinct article and answer-bearing evidence passage per topic. |
-| Optional logical inference pool | [AfriXNLI](https://huggingface.co/datasets/masakhane/afrixnli) | Align test row and check labels. Available in the extraction outputs. |
+| Logical inference (Domain 2) | [AfriXNLI](https://huggingface.co/datasets/masakhane/afrixnli) | Align test rows and check labels. Select a single hypothesis per premise before splitting. |
 
 Each upstream revision or archive hash and each downloaded file checksum is
 recorded in the frozen benchmarks. The downloads require no dataset credentials.
@@ -107,6 +109,18 @@ python scripts/build_scaled_benchmark.py --total-sources 300
 python scripts/build_scaled_benchmark.py --total-sources 75
 python scripts/extract_open_benchmarks.py
 ```
+
+Extracted JSONL records use the requested per-source shape: `source_id`,
+`domain`, `dataset`, `license`, and `language_sources`. Reading and
+conceptual records carry the original question, choices, and gold and foil
+options. Arithmetic records carry integer gold/foil and both the original
+question and its number-word rendering. AfriXNLI records carry premise,
+hypothesis and label. SIB records carry passage and gold/foil categories.
+AfriQA preserves the native question, English translation and published
+answer passage. Its `language_sources` contains the two published variants.
+The frozen run manifest nests the source fields and compiled prompts separately
+from judge messages. Its default run directories are `runs/option-c-mixed-300`
+and `runs/option-c-mixed-75` for this dataset mix.
 
 The published selections exclude repository pilot samples reproduced from their
 seeds and IDs recoverable from the Study 1 logs. The exact private Study 1

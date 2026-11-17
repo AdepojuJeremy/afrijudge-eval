@@ -439,6 +439,7 @@ def analyze(pairs, records, config):
     return {
         "judge_calls": len(records),
         "comparison_pairs": len(pairs),
+        "pairs_by_dataset": dict(Counter(p["dataset"] for p in pairs)),
         "protocol_diagnostics": dict(diagnostics),
         "invalid_judge_calls": len(records) - diagnostics["valid"],
         "resampling": {

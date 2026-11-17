@@ -40,9 +40,22 @@ def test_published_benchmark(total, calls):
     assert Counter(row["h2"]["original_lang"] for row in topics) == {
         lang: len(topics) // 3 for lang in LANGUAGES[1:]
     }
+    if total == 300:
+        assert Counter(row["dataset"] for row in data["sources"]) == {
+            "facebook/belebele": 75,
+            "masakhane/afrimmlu": 45,
+            "masakhane/afrixnli": 30,
+            "masakhane/afrimgsm": 75,
+            "Davlan/sib200 + FLORES-200": 75,
+        }
+    xnli_groups = [r["group"] for r in data["sources"] if r["source_id"].startswith("xnli:")]
+    assert len(xnli_groups) == len(set(xnli_groups))
     for group in data["sources"]:
+        if group["domain"] == "flores":
+            assert group["gold_category"] != group["foil_category"]
+            assert group["sib200_sentences"]
         if group["domain"] == "mgsm":
-            for v in group["variants"].values():
+            for v in group["language_sources"].values():
                 assert not MATH_SYMBOL.search(v["prompt"])
     for lang in LANGUAGES:
         forms = {number_text(n, lang) for n in range(10001)}
@@ -52,7 +65,7 @@ def test_published_benchmark(total, calls):
 
 def test_math_answer_metadata_is_removed_and_checked():
     row = next(row for row in _load()["sources"] if row["domain"] == "mgsm")
-    sample = row["variants"]["en"]
+    sample = row["language_sources"]["en"]
     out = {
         "correct": (
             f"The needed amount is {sample['gold_text']}. The values in the question show how "
@@ -76,7 +89,7 @@ def _protocol_pairs(data):
     for row in data["sources"]:
         for lang in LANGUAGES:
             sid = row["source_id"]
-            v = row["variants"][lang]
+            v = row["language_sources"][lang]
             neutral[sid, lang] = {"correct": v["gold_text"], "foil": v["foil_text"]}
             if row["split"] == "test":
                 shortcuts[sid, lang] = f"# {v['foil_text']}"
@@ -115,6 +128,8 @@ def test_full_schedule_position_mapping_report_and_audit():
     report = analyze(pairs, records, cfg)
     assert report["judge_calls"] == 31680
     assert report["invalid_judge_calls"] == 0
+    assert report["pairs_by_dataset"]["masakhane/afrixnli"] == 216
+    assert report["pairs_by_dataset"]["masakhane/afriqa"] == 480
     assert report["h3"]["overall"]["six_judge_majority"]["correct"] == 1920
     assert report["h2"]["paired_topic_contrasts"]["en_formal_minus_idiomatic"]["estimate"] == 0
 

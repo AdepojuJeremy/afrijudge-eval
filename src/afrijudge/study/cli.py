@@ -3,6 +3,7 @@
 import json
 import math
 import os
+from collections import Counter
 from pathlib import Path
 
 import httpx
@@ -196,7 +197,7 @@ def _frozen(root: Path, meta: dict, expected: int) -> list:
 
 
 def _settings(args):
-    root = args.run_dir or Path(f"runs/option-c-{args.total_sources}")
+    root = args.run_dir or Path(f"runs/option-c-mixed-{args.total_sources}")
     benchmark = args.benchmark or Path(f"study/benchmark-{args.total_sources}.json.gz")
     cfg = yaml.safe_load(args.config.read_text(encoding="utf-8"))
     if min(args.gen_max_tokens, args.judge_max_tokens) < 1:
@@ -259,7 +260,7 @@ async def _locked_paid(args, root, data, cfg, totals, ceiling, key):
         "config": digest(cfg),
         "generation_max_tokens": args.gen_max_tokens,
         "judge_max_tokens": args.judge_max_tokens,
-        "protocol": "option_c_v1",
+        "protocol": "option_c_v2",
     }
     manifest_path = root / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"id": identity}
@@ -344,6 +345,7 @@ async def run_command(args) -> dict:
             lock = await catalog(http, cfg)
         return {
             **totals,
+            "h1_sources_by_dataset": dict(Counter(row["dataset"] for row in data["sources"])),
             "models": lock["models"],
             "benchmark_hash": data["sha256"],
             "pricing": _pricing(totals, lock, cfg["judges"]),

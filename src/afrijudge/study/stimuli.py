@@ -63,7 +63,7 @@ def _messages(instruction: str, source: str) -> list[dict]:
 
 
 def h1_job(row: dict, lang: str, part: str, neutral: dict | None = None) -> Job:
-    v = row["variants"][lang]
+    v = row["language_sources"][lang]
     gold, foil = v["gold"], v["foil"]
     arithmetic = row["domain"] == "mgsm"
     variant = (
@@ -230,7 +230,7 @@ def _h1_prose(raw: str, expected: str, row: dict, lang: str) -> str:
 
 def neutral_prose(text: str, row: dict, lang: str) -> dict:
     obj = _object(text, {"correct", "foil"})
-    v = row["variants"][lang]
+    v = row["language_sources"][lang]
     out = {k: _h1_prose(obj[k], v["gold" if k == "correct" else "foil"], row, lang) for k in obj}
     sizes = [len(s.split()) for s in out.values()]
     if min(sizes) < 15 or max(sizes) > 85 or max(sizes) / min(sizes) > 1.45:
@@ -242,7 +242,7 @@ def neutral_prose(text: str, row: dict, lang: str) -> dict:
 
 def shortcut_prose(text: str, row: dict, lang: str, neutral: dict) -> str:
     raw = _object(text, {"shortcut"})["shortcut"]
-    prose = _h1_prose(raw, row["variants"][lang]["foil"], row, lang)
+    prose = _h1_prose(raw, row["language_sources"][lang]["foil"], row, lang)
     size = len(prose.split())
     if not 45 <= size <= 170 or size < 1.4 * len(neutral["foil"].split()):
         raise ValueError("Shortcut failed the required length expansion")
@@ -279,6 +279,7 @@ def _pair(row, lang, condition, prompt, a, b, **details):
     meta = {
         "source_id": row["source_id"],
         "domain": row["domain"],
+        "dataset": "masakhane/afriqa" if details.get("split") == "h2" else row["dataset"],
         "lang": lang,
         "condition": condition,
         **details,
@@ -294,7 +295,7 @@ def _pair(row, lang, condition, prompt, a, b, **details):
 
 
 def _compile_h1(row: dict, lang: str, neutral: dict, shortcut: str | None) -> list[dict]:
-    variants = row["variants"][lang]
+    variants = row["language_sources"][lang]
     author = row["author_model"]
     conditions = [("anchor" if row["split"] == "anchor" else "neutral_idiomatic", neutral["foil"])]
     if shortcut is not None:
@@ -398,6 +399,7 @@ def _fields(p: dict) -> dict:
         "pair_hash": digest(p),
         "source_id": p["source_id"],
         "domain": p["domain"],
+        "dataset": p["dataset"],
         "language": p["lang"],
         "condition": p["condition"],
         "author_or_matchup": p.get("author_model", p.get("matchup")),

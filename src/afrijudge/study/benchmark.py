@@ -30,6 +30,7 @@ LANGUAGES = ("en", "ha", "yo", "ig")
 DOMAINS = ("belebele", "mmlu", "mgsm", "flores")
 AUTHORS = ("gpt4o", "gemini25pro", "claude_sonnet")
 MATCHUPS = (("gemini25pro", "gpt4o"), ("llama33_70b", "gpt4o"), ("llama33_70b", "qwen25_72b"))
+DOMAIN2_COUNTS = {75: {"mmlu": (2, 9), "xnli": (2, 6)}, 300: {"mmlu": (9, 36), "xnli": (6, 24)}}
 TIERS = {
     75: ((4, 15), (4, 15), (4, 15), (3, 15)),
     300: ((15, 60),) * 4,
@@ -56,11 +57,70 @@ AFRIQA_GOLD = (
     "5c29933753692c28773c34ac1f68482007f1d2bb/data/gold_passages"
 )
 
-CLAIM = {
-    "en": "Which claim is supported by the passage? Explain your choice using details from it.",
-    "ha": "Wace magana ce nassin ya goyi baya? Yi bayanin zaɓinka da hujjoji daga nassin.",
-    "yo": "Èwo nínú àwọn gbólóhùn yìí ni àyọkà náà fi múlẹ̀? Ṣàlàyé yíyàn rẹ pẹ̀lú ẹ̀rí.",
-    "ig": "Kedu n'ime okwu ndị a ka ederede ahụ kwadoro? Jiri ihe dị n'ederede kọwaa nhọrọ gị.",
+RELATION = {
+    "en": "How does the second statement relate to the first? Explain your reasoning.",
+    "ha": "Wace alaƙa ce magana ta biyu take da ta farko? Bayyana dalilinka.",
+    "yo": "Báwo ni gbólóhùn kejì ṣe ní í ṣe pẹ̀lú ti àkọ́kọ́? Ṣàlàyé ìdí rẹ.",
+    "ig": "Kedu ka okwu nke abụọ si metụta nke mbụ? Kọwaa ihe kpatara azịza gị.",
+}
+NLI_LABELS = {
+    "en": ("follows from it", "is undetermined by it", "contradicts it"),
+    "ha": ("ta biyo daga gare ta", "ba za a iya tantance ta daga gare ta ba", "ta saɓa mata"),
+    "yo": ("ó tẹ̀ lé e", "a kò lè pinnu rẹ̀ láti inú rẹ̀", "ó tako ó"),
+    "ig": ("ọ na-esite na ya", "a pụghị ikpebi ya site na ya", "ọ na-emegide ya"),
+}
+TOPIC = {
+    "en": "Which topic best describes this passage? Explain using details from the text.",
+    "ha": "Wane batu ne ya fi bayyana abin da nassin ya ƙunsa? Yi bayani da hujjoji daga nassin.",
+    "yo": "Kókó wo ló bá àyọkà yìí mu jù? Ṣàlàyé pẹ̀lú ẹ̀kúnrẹ́rẹ́ láti inú àyọkà náà.",
+    "ig": "Kedu isiokwu kacha daba n'ederede a? Jiri nkọwa dị n'ederede kọwaa azịza gị.",
+}
+CATEGORIES = (
+    "science/technology",
+    "health",
+    "politics",
+    "sports",
+    "travel",
+    "geography",
+    "entertainment",
+)
+CATEGORY_WORDS = {
+    "en": (
+        "science and technology",
+        "health",
+        "politics",
+        "sports",
+        "travel",
+        "geography",
+        "entertainment",
+    ),
+    "ha": (
+        "kimiyya da fasaha",
+        "lafiya",
+        "siyasa",
+        "wasanni",
+        "tafiye-tafiye",
+        "ilimin ƙasa",
+        "nishaɗi",
+    ),
+    "yo": (
+        "ìmọ̀ sáyẹ́ǹsì àti ìmọ̀ ẹ̀rọ",
+        "ìlera",
+        "òṣèlú",
+        "eré ìdárayá",
+        "ìrìn-àjò",
+        "ìmọ̀ ilẹ̀-ayé",
+        "eré ìnàjú",
+    ),
+    "ig": (
+        "sayensị na teknụzụ",
+        "ahụike",
+        "ndọrọ ndọrọ ọchịchị",
+        "egwuregwu",
+        "njem",
+        "ọmụmụ ala",
+        "ntụrụndụ",
+    ),
 }
 
 
@@ -100,7 +160,9 @@ def _choices(question: str, choices: list[str]) -> str:
     return (
         question
         + "\n"
-        + "\n".join(f"{label}) {text}" for label, text in zip("ABCD", choices, strict=True))
+        + "\n".join(
+            f"{label}) {text}" for label, text in zip("ABCD"[: len(choices)], choices, strict=True)
+        )
     )
 
 
@@ -108,6 +170,8 @@ def _mc_candidates(questions, options, gold_idx, foil_idx) -> dict:
     return {
         lang: {
             "prompt": _choices(questions[lang], options[lang]),
+            "question": questions[lang],
+            "choices": options[lang],
             "gold": "ABCD"[gold_idx],
             "foil": "ABCD"[foil_idx],
             "gold_text": options[lang][gold_idx],
@@ -128,7 +192,7 @@ def belebele(cache: Path, origin: list) -> list[dict]:
     if any(table.keys() != tables["en"].keys() for table in tables.values()):
         raise ValueError("Belebele source key mismatch")
     result = []
-    for link, idx in sorted(tables["en"]):
+    for source_index, (link, idx) in enumerate(tables["en"]):
         rows = {lang: table[link, idx] for lang, table in tables.items()}
         gold = {int(row["correct_answer_num"]) - 1 for row in rows.values()}
         if len(gold) != 1:
@@ -141,15 +205,19 @@ def belebele(cache: Path, origin: list) -> list[dict]:
         }
         if any(len(set(values)) != 4 or not all(values) for values in options.values()):
             continue
-        questions = {
-            lang: nfc(row["flores_passage"].strip() + "\n\n" + row["question"].strip())
-            for lang, row in rows.items()
-        }
+        questions = {lang: nfc(row["question"].strip()) for lang, row in rows.items()}
+        passages = {lang: nfc(row["flores_passage"].strip()) for lang, row in rows.items()}
+        combined = {lang: f"{passages[lang]}\n\n{questions[lang]}" for lang in LANGUAGES}
+        variants = _mc_candidates(combined, options, gold_idx, foil_idx)
+        for lang in LANGUAGES:
+            variants[lang].update(passage=passages[lang], question=questions[lang])
         result.append(
             {
-                "source_id": f"belebele:{digest(link)[:12]}:{idx}",
+                "source_id": f"belebele:{source_index}",
+                "legacy_source_id": f"belebele:{digest(link)[:12]}:{idx}",
                 "article": link,
-                "variants": _mc_candidates(questions, options, gold_idx, foil_idx),
+                "question_number": idx,
+                "language_sources": variants,
             }
         )
     return result
@@ -210,7 +278,7 @@ def mmlu(cache: Path, origin: list, exclusions: set) -> list[dict]:
             {
                 "source_id": f"mmlu:{idx}",
                 "subject": rows["en"]["subject"],
-                "variants": _mc_candidates(
+                "language_sources": _mc_candidates(
                     {lang: nfc(row["question"].strip()) for lang, row in rows.items()},
                     options,
                     gold_idx,
@@ -271,10 +339,13 @@ def mgsm(cache: Path, origin: list, exclusions: set) -> list[dict]:
         result.append(
             {
                 "source_id": f"mgsm:{idx}",
+                "gold": gold,
+                "foil": foil,
                 "reference_quantities": sorted(intermediate),
-                "variants": {
+                "language_sources": {
                     lang: {
                         "prompt": prompt,
+                        "question": nfc(rows[lang]["question"].strip()),
                         "gold": str(gold),
                         "foil": str(foil),
                         "gold_text": number_text(gold, lang),
@@ -312,7 +383,31 @@ def xnli(cache: Path, origin: list) -> list:
         if any(v["label"] != en["label"] for v in variants.values()):
             raise ValueError(f"AfriXNLI label mismatch at row {idx}")
         if all(v["premise"].strip() and v["hypothesis"].strip() for v in variants.values()):
-            result.append({"source_id": f"xnli:{idx}", "variants": variants})
+            result.append({"source_id": f"xnli:{idx}", "language_sources": variants})
+    return result
+
+
+def logical(rows: list[dict]) -> list[dict]:
+    """Turn aligned AfriXNLI rows into explanation questions with a fixed foil."""
+    result = []
+    for row in rows:
+        variants = row["language_sources"]
+        label = int(variants["en"]["label"])
+        sid = row["source_id"]
+        foil = (label + 1 + int(digest(sid), 16) % 2) % 3
+        questions = {
+            lang: f"{v['premise']}\n\n{v['hypothesis']}\n\n{RELATION[lang]}"
+            for lang, v in variants.items()
+        }
+        choices = _mc_candidates(questions, NLI_LABELS, label, foil)
+        result.append(
+            {
+                "source_id": sid,
+                "dataset": "masakhane/afrixnli",
+                "group": digest(_gsm_key(variants["en"]["premise"])),
+                "language_sources": choices,
+            }
+        )
     return result
 
 
@@ -333,7 +428,7 @@ def sib200(cache: Path, origin: list) -> list:
         variants = {lang: table[idx] for lang, table in tables.items()}
         if len({r["category"] for r in variants.values()}) != 1:
             raise ValueError(f"SIB-200 category mismatch at sentence {idx}")
-        result.append({"source_id": f"sib200:{idx}", "variants": variants})
+        result.append({"source_id": f"sib200:{idx}", "language_sources": variants})
     return result
 
 
@@ -440,7 +535,7 @@ def _assign_h2(rows: list, topics: list, seed: int, exclusions: set[str]) -> Non
 
 
 def flores(cache: Path, origin: list) -> list[dict]:
-    lookup = {_gsm_key(r["variants"]["en"]["text"]): r for r in sib200(cache, origin)}
+    lookup = {_gsm_key(r["language_sources"]["en"]["text"]): r for r in sib200(cache, origin)}
     origin.append(FLORES_SOURCE)
     with flores_archive(FLORES_SOURCE, cache) as arc:
         metadata = list(
@@ -464,71 +559,59 @@ def flores(cache: Path, origin: list) -> list[dict]:
         for idx in ids:
             match = lookup.get(_gsm_key(texts["en"][idx]))
             if match and all(
-                _gsm_key(texts[lang][idx]) == _gsm_key(match["variants"][lang]["text"])
+                _gsm_key(texts[lang][idx]) == _gsm_key(match["language_sources"][lang]["text"])
                 for lang in LANGUAGES
             ):
                 found.append(match)
         return found
 
-    eligible = [
-        (url, ids, topics(ids))
-        for url, ids in sorted(documents.items())
-        if len(ids) >= 3 and topics(ids)
-    ]
-    # Retain pilot document exclusions at the document level, even if the pilot sentence
-    # would not have been used as the lead. Reserve separate source articles for foils.
+    # Keep previous FLORES pilot articles out of the new selection.
     prior_rows = random.Random(42).sample(sorted(str(i) for i in range(len(metadata))), 30)
     prior_articles = {metadata[int(idx)]["URL"] for idx in prior_rows}
-    foil_pool = [group for group in eligible if int(digest(group[0]), 16) % 5 == 0]
-    foil_articles = {article for article, _, _ in foil_pool}
-    # Foils are first sentences of another FLORES document from the same source
-    # domain. The passage retains only the remaining sentences from its own article.
     result = []
-    for url, ids, labels in eligible:
-        if url in prior_articles or url in foil_articles:
+    for url, ids in sorted(documents.items()):
+        if url in prior_articles or len(ids) < 3:
             continue
-        first = ids[0]
-        distractors = [
-            other_ids[0]
-            for other_url, other_ids, _ in foil_pool
-            if other_url != url
-            and metadata[other_ids[0]]["domain"] == metadata[first]["domain"]
-            and metadata[other_ids[0]]["topic"] != metadata[first]["topic"]
-        ]
-        if not distractors:
+        labels = topics(ids)
+        categories = {row["language_sources"]["en"]["category"] for row in labels}
+        if len(categories) != 1:
             continue
-        foil = min(distractors, key=lambda idx: digest([first, idx]))
+        category = categories.pop()
+        foil_choices = [other for other in CATEGORIES if other != category]
+        foil = min(foil_choices, key=lambda other: digest([url, other]))
         correct_first = int(digest(url), 16) % 2 == 0
         variants = {}
         for lang, rows in texts.items():
-            evidence = nfc(" ".join(rows[idx] for idx in ids[1:]))
-            gold_text, foil_text = nfc(rows[first]), nfc(rows[foil])
+            passage = nfc(" ".join(rows[idx] for idx in ids))
+            gold_text = CATEGORY_WORDS[lang][CATEGORIES.index(category)]
+            foil_text = CATEGORY_WORDS[lang][CATEGORIES.index(foil)]
             options = [gold_text, foil_text] if correct_first else [foil_text, gold_text]
             variants[lang] = {
-                "prompt": f"{evidence}\n\n{CLAIM[lang]}\nA) {options[0]}\nB) {options[1]}",
+                "prompt": f"{passage}\n\n{TOPIC[lang]}\nA) {options[0]}\nB) {options[1]}",
+                "passage": passage,
+                "question": TOPIC[lang],
+                "choices": options,
                 "gold": "A" if correct_first else "B",
                 "foil": "B" if correct_first else "A",
                 "gold_text": gold_text,
                 "foil_text": foil_text,
+                "gold_category": category,
+                "foil_category": foil,
             }
         result.append(
             {
-                "source_id": f"flores:{first}",
+                "source_id": f"flores:{ids[0]}",
+                "dataset": "Davlan/sib200 + FLORES-200",
                 "article": url,
                 "sentence_rows": ids,
-                "foil_article": metadata[foil]["URL"],
-                "foil_sentence_row": foil,
                 "reference_provenance": "published_FLORES200_translations",
-                "sib200_sentences": [
-                    {
-                        "source_id": topic["source_id"],
-                        "category": topic["variants"]["en"]["category"],
-                    }
-                    for topic in labels
-                ],
-                "variants": variants,
+                "sib200_sentences": [topic["source_id"] for topic in labels],
+                "gold_category": category,
+                "foil_category": foil,
+                "language_sources": variants,
             }
         )
+
     return result
 
 
@@ -541,8 +624,10 @@ def _select(rows, domain, seed, counts, exclusions, used_articles) -> list:
     ranked = sorted(rows, key=lambda row: digest([seed, domain, row["source_id"]]))
     seen, chosen = set(used_articles), []
     for row in ranked:
-        key = _article_key(row.get("article", row["source_id"]))
-        if row["source_id"] in exclusions or key in seen:
+        key = _article_key(row.get("article", row.get("group", row["source_id"])))
+        aliases = [row["source_id"], row.get("legacy_source_id"), *row.get("sib200_sentences", [])]
+        aliases.extend(f"flores:{idx}" for idx in row.get("sentence_rows", []))
+        if exclusions.intersection(aliases) or key in seen:
             continue
         seen.add(key)
         if "article" in row:
@@ -557,6 +642,7 @@ def _select(rows, domain, seed, counts, exclusions, used_articles) -> list:
         local_idx = idx if anchor else idx - anchor_n
         row.update(
             domain=domain,
+            dataset=row.get("dataset") or PINNED[domain][0],
             split="anchor" if anchor else "test",
             author_model=AUTHORS[local_idx % len(AUTHORS)],
         )
@@ -582,6 +668,7 @@ def build(cache: Path, total: int, seed: int, exclusions: set[str]) -> dict:
     pools = {
         "belebele": belebele(cache, origin),
         "mmlu": mmlu(cache, origin, exclusions),
+        "xnli": logical(xnli(cache, origin)),
         "mgsm": mgsm(cache, origin, exclusions),
         "flores": flores(cache, origin),
     }
@@ -589,10 +676,16 @@ def build(cache: Path, total: int, seed: int, exclusions: set[str]) -> dict:
     used_articles = set()
     rows = []
     for domain, counts in zip(DOMAINS, TIERS[total], strict=True):
-        rows.extend(_select(pools[domain], domain, seed, counts, exclusions, used_articles))
+        if domain == "mmlu":
+            for pool, split_counts in DOMAIN2_COUNTS[total].items():
+                rows.extend(
+                    _select(pools[pool], domain, seed, split_counts, exclusions, used_articles)
+                )
+        else:
+            rows.extend(_select(pools[domain], domain, seed, counts, exclusions, used_articles))
     _assign_h2(rows, topics, seed, exclusions)
     body = {
-        "schema": 1,
+        "schema": 2,
         "seed": seed,
         "total_sources": total,
         "languages": list(LANGUAGES),
@@ -612,13 +705,13 @@ def open_benchmark(path: Path) -> dict:
     else:
         data = json.loads(path.read_text(encoding="utf-8"))
     body = {key: value for key, value in data.items() if key != "sha256"}
-    if data["sha256"] != digest(body) or data["schema"] != 1:
+    if data["sha256"] != digest(body) or data["schema"] != 2:
         raise ValueError("Benchmark has an unsupported version or has been edited")
     rows, total = data["sources"], data["total_sources"]
     if len(rows) != total or len({row["source_id"] for row in rows}) != total:
         raise ValueError("Benchmark requires unique matched source IDs")
     if data["languages"] != list(LANGUAGES) or any(
-        set(row["variants"]) != set(LANGUAGES) for row in rows
+        set(row["language_sources"]) != set(LANGUAGES) for row in rows
     ):
         raise ValueError("Incomplete language coverage")
     used_ids = {row["source_id"] for row in rows}
@@ -633,6 +726,16 @@ def open_benchmark(path: Path) -> dict:
                 sum(row["author_model"] == author for row in selected) for author in AUTHORS
             } != {expected // len(AUTHORS)}:
                 raise ValueError(f"Unbalanced author assignment in {domain} {split}")
+        if domain == "mmlu":
+            for pool, (anchors, tests) in DOMAIN2_COUNTS[total].items():
+                for split, expected in (("anchor", anchors), ("test", tests)):
+                    found = sum(
+                        row["dataset"] == PINNED[pool][0] and row["split"] == split
+                        for row in rows
+                        if row["domain"] == domain
+                    )
+                    if found != expected:
+                        raise ValueError(f"Wrong {pool} allocation in {split}")
         if domain == "flores":
             selected = [r for r in rows if r["domain"] == domain and r["split"] == "test"]
             if {
