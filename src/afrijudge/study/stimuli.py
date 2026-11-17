@@ -532,21 +532,23 @@ def export_reviews(directory: Path, pairs: list, seed: int, sources: list) -> in
         source = source_by_id[sid]
         topic = source.get("h2", {}) if pair["split"] == "h2" else {}
         reference = source["language_sources"][lang]
-        rows.append({
-            **_fields(pair),
-            "matched_condition": other.get("condition", ""),
-            "matched_question": other.get("prompt", ""),
-            "matched_response_a": other.get("a", {}).get("text", ""),
-            "matched_response_b": other.get("b", {}).get("text", ""),
-            "reference_gold": topic.get("answer", reference["gold_text"]),
-            "reference_foil": "" if topic else reference["foil_text"],
-            "afriqa_topic_id": topic.get("topic_id", ""),
-            "afriqa_original_language": topic.get("original_lang", ""),
-            "afriqa_original_question": topic.get("question", ""),
-            "afriqa_english_question": topic.get("english_question", ""),
-            "afriqa_english_answers": " | ".join(topic.get("english_answers", [])),
-            "afriqa_published_english_evidence": topic.get("passage", ""),
-        })
+        rows.append(
+            {
+                **_fields(pair),
+                "matched_condition": other.get("condition", ""),
+                "matched_question": other.get("prompt", ""),
+                "matched_response_a": other.get("a", {}).get("text", ""),
+                "matched_response_b": other.get("b", {}).get("text", ""),
+                "reference_gold": topic.get("answer", reference["gold_text"]),
+                "reference_foil": "" if topic else reference["foil_text"],
+                "afriqa_topic_id": topic.get("topic_id", ""),
+                "afriqa_original_language": topic.get("original_lang", ""),
+                "afriqa_original_question": topic.get("question", ""),
+                "afriqa_english_question": topic.get("english_question", ""),
+                "afriqa_english_answers": " | ".join(topic.get("english_answers", [])),
+                "afriqa_published_english_evidence": topic.get("passage", ""),
+            }
+        )
     _write_csv(directory / "stratified_audit.csv", rows)
     return len(sample)
 

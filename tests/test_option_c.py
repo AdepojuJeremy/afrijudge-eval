@@ -43,6 +43,19 @@ def test_bundled_benchmark_excludes_every_study1_source(total, suffix):
     assert study1_ids.isdisjoint(selected)
 
 
+@pytest.mark.parametrize("alias", ("legacy_source_id", "sentence_rows"))
+def test_benchmark_reader_rechecks_excluded_aliases(tmp_path, alias):
+    data = _load(75)
+    row = next(r for r in data["sources"] if alias in r)
+    excluded = row[alias] if alias == "legacy_source_id" else f"flores:{row[alias][-1]}"
+    data["excluded_source_ids"].append(excluded)
+    data["sha256"] = digest({key: value for key, value in data.items() if key != "sha256"})
+    path = tmp_path / "benchmark.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="excluded source ID"):
+        open_benchmark(path)
+
+
 @pytest.mark.parametrize("total,calls", ((75, 7920), (300, 31680)))
 def test_published_benchmark(total, calls):
     data = _load(total)
@@ -151,9 +164,12 @@ def test_full_schedule_position_mapping_report_and_audit():
         row["formal_minus_human_original"]["source_groups"] == 20
         for row in report["h2"]["matched_human_original_topic_contrasts"].values()
     )
-    assert report["h1"]["hau_yo_ig_contrasts"][
-        "full_panel_minus_top1_shortcut_correct_per_assigned_item"
-    ]["estimate"] == 0
+    assert (
+        report["h1"]["hau_yo_ig_contrasts"][
+            "full_panel_minus_top1_shortcut_correct_per_assigned_item"
+        ]["estimate"]
+        == 0
+    )
 
 
 def test_rate_limit_cooldown_keeps_other_route_moving(monkeypatch):
@@ -199,9 +215,9 @@ def test_generation_repair_receives_the_rejected_draft(monkeypatch):
 
     monkeypatch.setattr(execution, "dispatch", dispatch)
     job = Job("author", [{"role": "user", "content": "Write JSON."}], {})
-    assert asyncio.run(execution.generate(None, [job], 1024, lambda i, t: json.loads(t), "test")) == [
-        {"answer": "complete"}
-    ]
+    assert asyncio.run(
+        execution.generate(None, [job], 1024, lambda i, t: json.loads(t), "test")
+    ) == [{"answer": "complete"}]
     messages, cap = attempts[1]
     assert cap == 2048
     assert messages[1] == {"role": "assistant", "content": '{"answer":'}

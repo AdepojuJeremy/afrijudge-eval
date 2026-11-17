@@ -226,13 +226,17 @@ def _h1(items, votes, calibrations, seed):
             shortcut = np.array(vals[lang, wrong_style, "all"])
             low_neutral = np.array(vals[lang, neutral_style, "anchor_bottom3"])
             high_neutral = np.array(vals[lang, neutral_style, "anchor_top3"])
-            diffs.append(np.concatenate((
-                (low - high)[:3],
-                (shortcut - neutral)[:3],
-                [(low_neutral - high_neutral)[2]],
-                ((low - low_neutral) - (high - high_neutral))[:2],
-                [shortcut[3] - top1_correct[domain, source_id, lang, wrong_style]],
-            )))
+            diffs.append(
+                np.concatenate(
+                    (
+                        (low - high)[:3],
+                        (shortcut - neutral)[:3],
+                        [(low_neutral - high_neutral)[2]],
+                        ((low - low_neutral) - (high - high_neutral))[:2],
+                        [shortcut[3] - top1_correct[domain, source_id, lang, wrong_style]],
+                    )
+                )
+            )
         contrasts.append((domain, np.mean(diffs, axis=0).tolist()))
     names = [
         "bottom3_minus_top3_shortcut_agreement",
@@ -401,10 +405,15 @@ def _h2(items, votes, families, seed):
                 [*neutral_diffs, *style_diffs, np.mean(neutral_diffs), np.mean(style_diffs[1:])],
             )
         )
-        native_contrasts[origin].append((matchup, [
-            values[origin, neutral] - values["en", neutral],
-            values[origin, formal] - values[origin, neutral],
-        ]))
+        native_contrasts[origin].append(
+            (
+                matchup,
+                [
+                    values[origin, neutral] - values["en", neutral],
+                    values[origin, formal] - values[origin, neutral],
+                ],
+            )
+        )
     names = [
         *(f"{lang}_idiomatic_minus_english" for lang in LANGUAGES[1:]),
         *(f"{lang}_formal_minus_idiomatic" for lang in LANGUAGES),
@@ -429,11 +438,13 @@ def _h2(items, votes, families, seed):
         },
         "paired_topic_contrasts": dict(zip(names, _measure(contrasts, seed), strict=True)),
         "matched_human_original_topic_contrasts": {
-            lang: dict(zip(
-                ("human_original_minus_english_pivot", "formal_minus_human_original"),
-                _measure(rows, seed),
-                strict=True,
-            ))
+            lang: dict(
+                zip(
+                    ("human_original_minus_english_pivot", "formal_minus_human_original"),
+                    _measure(rows, seed),
+                    strict=True,
+                )
+            )
             for lang, rows in sorted(native_contrasts.items())
         },
         "leave_one_matchup_out": {

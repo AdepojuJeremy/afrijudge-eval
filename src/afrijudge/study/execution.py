@@ -93,13 +93,15 @@ async def generate(client, jobs: list[Job], cap: int, validate: Callable, kind: 
             if attempt:
                 if draft.strip():
                     messages.append({"role": "assistant", "content": draft})
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        f"Validation attempt {attempt} failed: {error} "
-                        "Return a fresh, complete JSON object satisfying the original request."
-                    ),
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Validation attempt {attempt} failed: {error} "
+                            "Return a fresh, complete JSON object satisfying the original request."
+                        ),
+                    }
+                )
             by_cap[limit].append(
                 (
                     idx,
